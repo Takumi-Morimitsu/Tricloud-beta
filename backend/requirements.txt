@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+psycopg[binary]
+pyzmq
+cryptography
+requests
+argon2-cffi
+psutil
+stripe
+pydantic
+email-validator
+python-multipart

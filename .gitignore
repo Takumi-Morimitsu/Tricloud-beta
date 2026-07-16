@@ -1,0 +1,69 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Node / Vite / Electron dependencies and outputs
+node_modules/
+dist/
+out/
+release/
+*.asar
+*.exe
+*.msi
+*.blockmap
+
+# Generated installer/runtime resources (source files under build/ remain trackable)
+build/runtime/
+build/python-embed/
+build/python-installer/
+build/python-wheels/
+build/*validation*.log
+build/builder-debug.yml
+build/builder-effective-config.yaml
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Local runtime data
+node_store/
+uploads/
+downloads/
+tmp/
+temp/
+logs/
+phase1-node-logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets, keys and certificates
+*.key
+*.pem
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Backups, archives and diagnostic leftovers
+*.bak
+*.bak-*
+*.backup
+*.old
+*.orig
+*.before-*
+*.zip
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

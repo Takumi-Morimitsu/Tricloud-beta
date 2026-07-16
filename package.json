@@ -1,0 +1,98 @@
+{
+  "name": "tricloud-beta",
+  "version": "0.1.0-beta",
+  "private": true,
+  "main": "electron_app_main.cjs",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "electron:dev": "concurrently -k \"cross-env VITE_API_BASE=https://api.trytricloud.com VITE_SERVER_BASE=tcp://api.trytricloud.com:8888 vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RENDERER_MODE=dev VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "electron:prod": "npm run build && electron .",
+    "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows-installer-with-python.ps1",
+    "dist:win:installer": "powershell -ExecutionPolicy Bypass -File scripts/build-windows-installer-with-python.ps1",
+    "release:sha256": "powershell -ExecutionPolicy Bypass -File scripts/create-sha256sums.ps1"
+  },
+  "dependencies": {
+    "react": "latest",
+    "react-dom": "latest",
+    "lucide-react": "latest"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17",
+    "postcss": "^8.4.49",
+    "autoprefixer": "^10.4.20",
+    "electron-builder": "latest",
+    "electron": "latest",
+    "vite": "latest",
+    "typescript": "latest",
+    "@vitejs/plugin-react": "latest",
+    "concurrently": "latest",
+    "wait-on": "latest",
+    "cross-env": "latest"
+  },
+  "description": "Tricloud beta desktop app",
+  "build": {
+    "appId": "com.tricloud.beta",
+    "productName": "Tricloud Beta",
+    "copyright": "Copyright © 2026 Tricloud",
+    "asar": false,
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron_app_main.cjs",
+      "electron/**/*",
+      "backend/**/*",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "electron_app_main.cjs"
+    },
+    "win": {
+      "icon": "build/tricloud.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "artifactName": "Tricloud-Beta-Setup-${version}-win-${arch}.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Tricloud Beta",
+      "deleteAppDataOnUninstall": false
+    },
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "node_phase1_runner.py",
+          "node.py",
+          "crypto_common_keywrap.py"
+        ]
+      },
+      {
+        "from": "build/runtime",
+        "to": "runtime",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/*.pyo"
+        ]
+      }
+    ]
+  },
+  "author": "Takumi Morimitsu"
+}
