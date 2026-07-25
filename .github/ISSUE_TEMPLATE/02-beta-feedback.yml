@@ -1,0 +1,85 @@
+name: Beta feedback
+description: Share testing results, usability feedback, or a feature suggestion.
+title: "[Feedback] "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve Tricloud.
+
+        Reports in English, Japanese, or Spanish are welcome. Please use test data only and do not include confidential information.
+
+        For a reproducible malfunction, use the **Bug report** form. For a security vulnerability, use [GitHub private vulnerability reporting](https://github.com/Takumi-Morimitsu/Tricloud-beta/security/advisories/new) instead of a public Issue.
+
+  - type: dropdown
+    id: feedback-area
+    attributes:
+      label: Feedback area
+      options:
+        - Installation and first launch
+        - Account creation and login
+        - File and folder operations
+        - Automatic backup
+        - Offline use
+        - Storage-provider mode
+        - Network reconnection
+        - UI and usability
+        - Japanese, English, or Spanish translation
+        - Performance and stability
+        - Future feature or improvement
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Test environment
+      description: Enter the Tricloud version and Windows version, if applicable.
+      placeholder: v0.1.0-beta Installer on Windows 11 x64
+
+  - type: textarea
+    id: tested
+    attributes:
+      label: What did you test?
+      description: Describe the task or flow you tried.
+    validations:
+      required: true
+
+  - type: textarea
+    id: worked-well
+    attributes:
+      label: What worked well?
+      description: Tell us what was clear, reliable, or useful.
+
+  - type: textarea
+    id: unclear
+    attributes:
+      label: What was difficult or unclear?
+      description: Include wording, controls, setup steps, or behavior that should be improved.
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+      description: Describe the result you would prefer and why it would help.
+
+  - type: textarea
+    id: provider-feedback
+    attributes:
+      label: Storage-provider feedback
+      description: If tested, describe node startup, contributed-capacity recognition, start/stop behavior, uptime, and reconnection after a network interruption.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Final checks
+      options:
+        - label: I used test data and did not rely on Tricloud as the only copy of an important file.
+          required: true
+        - label: I removed passwords, tokens, API keys, personal information, file contents, and other confidential data from this report.
+          required: true
