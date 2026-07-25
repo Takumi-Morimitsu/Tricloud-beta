@@ -1,0 +1,132 @@
+name: Bug report
+description: Report a reproducible problem in the Tricloud Windows beta.
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing Tricloud.
+
+        Reports in English, Japanese, or Spanish are welcome.
+
+        **Do not use this form for security vulnerabilities.** Report them privately through [GitHub private vulnerability reporting](https://github.com/Takumi-Morimitsu/Tricloud-beta/security/advisories/new).
+
+        Before submitting logs or screenshots, remove passwords, authentication tokens, API keys, node API keys, personal information, file contents, and other confidential data.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of Tricloud was affected?
+      options:
+        - Installation or Windows SmartScreen
+        - Account creation or login
+        - File upload or download
+        - File or folder management
+        - Automatic backup
+        - Offline use
+        - Storage-provider setup
+        - Storage-provider node
+        - Network interruption or reconnection
+        - UI or translation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: tricloud-version
+    attributes:
+      label: Tricloud version
+      description: Enter the release or build you used.
+      placeholder: v0.1.0-beta Installer
+    validations:
+      required: true
+
+  - type: input
+    id: windows-version
+    attributes:
+      label: Windows version
+      description: Include the edition and build number if available.
+      placeholder: Windows 11 24H2, OS build 26100.x
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Processor architecture
+      options:
+        - x64
+        - ARM64
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem summary
+      description: Briefly describe what went wrong.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the smallest reliable sequence that reproduces the problem.
+      placeholder: |
+        1. Open Tricloud
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: node-network
+    attributes:
+      label: Node and network state
+      description: If relevant, state whether the storage-provider node was online or offline and whether Wi-Fi or another network connection had just been interrupted or restored.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or error messages
+      description: Paste only the relevant section after removing all secrets, personal information, and private file data.
+      render: shell
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Drag screenshots here if they help, after removing personal or confidential information.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Final checks
+      options:
+        - label: I searched existing Issues for the same problem.
+          required: true
+        - label: I used test data and did not rely on Tricloud as the only copy of an important file.
+          required: true
+        - label: I removed passwords, tokens, API keys, personal information, file contents, and other confidential data from this report.
+          required: true
