@@ -1345,6 +1345,270 @@ const UI_TRANSLATIONS: UiTranslationMap = {
   "無料プランでは、この場所に広告が表示される予定です。": {
     "en": "In the free plan, ads are planned to appear here.",
     "es": "En el plan gratuito, está previsto que los anuncios aparezcan aquí."
+  },
+  "この操作": {
+    "en": "this action",
+    "es": "esta acción"
+  },
+  "{purpose}にはログイン用メールアドレスが必要です。再ログイン後にお試しください。": {
+    "en": "An email address is required for {purpose}. Sign in again and try.",
+    "es": "Se necesita un correo electrónico para {purpose}. Vuelve a iniciar sesión e inténtalo de nuevo."
+  },
+  "ログイン時パスワードが正しくありません。もう一度入力してください。": {
+    "en": "The login password is incorrect. Try again.",
+    "es": "La contraseña de inicio de sesión es incorrecta. Inténtalo de nuevo."
+  },
+  "このPC": {
+    "en": "This PC",
+    "es": "Este PC"
+  },
+  "自動バックアップ中": {
+    "en": "Auto backup active",
+    "es": "Copia automática activa"
+  },
+  "オフライン利用中": {
+    "en": "Offline access active",
+    "es": "Uso sin conexión activo"
+  },
+  "バックアップ対象なし": {
+    "en": "No backup targets",
+    "es": "Sin elementos de copia de seguridad"
+  },
+  "{path} ほか {count}件": {
+    "en": "{path} and {count} more",
+    "es": "{path} y {count} más"
+  },
+  "バックアップ対象フォルダのクラウドIDを取得できなかったため、登録を中止しました。もう一度アップロードしてください。": {
+    "en": "The cloud ID for the backup folder could not be retrieved, so it was not added. Upload it again.",
+    "es": "No se pudo obtener el ID en la nube de la carpeta de copia de seguridad, por lo que no se añadió. Vuelve a subirla."
+  },
+  "マイノード": {
+    "en": "My node",
+    "es": "Mi nodo"
+  },
+  "ノード情報の読み込みに失敗しました。": {
+    "en": "Failed to load node information.",
+    "es": "No se pudo cargar la información del nodo."
+  },
+  "同期設定の読み込みに失敗しました。": {
+    "en": "Failed to load sync settings.",
+    "es": "No se pudo cargar la configuración de sincronización."
+  },
+  "バックアップ対象の読み込みに失敗しました。": {
+    "en": "Failed to load backup targets.",
+    "es": "No se pudieron cargar los elementos de copia de seguridad."
+  },
+  "読み込みに失敗しました。": {
+    "en": "Failed to load.",
+    "es": "No se pudo cargar."
+  },
+  "認証に失敗しました。": {
+    "en": "Authentication failed.",
+    "es": "Error de autenticación."
+  },
+  "選択できない国/地域です。": {
+    "en": "This country/region cannot be selected.",
+    "es": "No se puede seleccionar este país o región."
+  },
+  "国/地域の更新に失敗しました。": {
+    "en": "Failed to update the country/region.",
+    "es": "No se pudo actualizar el país o la región."
+  },
+  "国/地域の更新": {
+    "en": "Country/region update",
+    "es": "Actualización de país/región"
+  },
+  "画像ファイルを選択してください。": {
+    "en": "Select an image file.",
+    "es": "Selecciona un archivo de imagen."
+  },
+  "アカウント画像": {
+    "en": "Profile image",
+    "es": "Imagen de perfil"
+  },
+  "設定画面はテスト版ではアカウントメニューに統合しています。": {
+    "en": "In this beta, settings are included in the account menu.",
+    "es": "En esta versión beta, la configuración está incluida en el menú de la cuenta."
+  },
+  "メールアドレスの形式が正しくありません。": {
+    "en": "The email address format is invalid.",
+    "es": "El formato del correo electrónico no es válido."
+  },
+  "共有先のメールアドレスを入力してください。": {
+    "en": "Enter the recipient's email address.",
+    "es": "Introduce el correo electrónico del destinatario."
+  },
+  "{count}件を {recipients} の共有アイテムへ送信しました。": {
+    "en": "Sent {count} items to: {recipients}.",
+    "es": "Se enviaron {count} elementos a: {recipients}."
+  },
+  "共有の送信に失敗しました。": {
+    "en": "Failed to send the shared items.",
+    "es": "No se pudieron enviar los elementos compartidos."
+  },
+  "フォルダのダウンロードはまだ未対応です。": {
+    "en": "Folder downloads are not supported yet.",
+    "es": "La descarga de carpetas todavía no es compatible."
+  },
+  "ダウンロード保存に失敗しました。": {
+    "en": "Failed to save the download.",
+    "es": "No se pudo guardar la descarga."
+  },
+  "ダウンロードしました: {path}": {
+    "en": "Downloaded to: {path}",
+    "es": "Descargado en: {path}"
+  },
+  "ダウンロードに失敗しました。": {
+    "en": "Download failed.",
+    "es": "Error de descarga."
+  },
+  "ごみ箱内のファイルは開けません。復元してから開いてください。": {
+    "en": "Files in Trash cannot be opened. Restore the file first.",
+    "es": "No se pueden abrir archivos de la Papelera. Restaura primero el archivo."
+  },
+  "デスクトップアプリ側のファイルを開くブリッジが未接続です。": {
+    "en": "The desktop app bridge for opening files is not connected.",
+    "es": "El puente de la app de escritorio para abrir archivos no está conectado."
+  },
+  "ファイルを開けませんでした。": {
+    "en": "The file could not be opened.",
+    "es": "No se pudo abrir el archivo."
+  },
+  "フォルダの一括ダウンロードはまだ未対応です。今回はファイルのみダウンロードできます。": {
+    "en": "Bulk folder downloads are not supported yet. Only files can be downloaded.",
+    "es": "La descarga por lotes de carpetas todavía no es compatible. Solo se pueden descargar archivos."
+  },
+  "ファイル {fileCount}件をダウンロードしました。フォルダ {folderCount}件は一括ダウンロード未対応のためスキップしました。": {
+    "en": "Downloaded {fileCount} files. Skipped {folderCount} folders because bulk folder downloads are not supported yet.",
+    "es": "Se descargaron {fileCount} archivos. Se omitieron {folderCount} carpetas porque la descarga por lotes de carpetas todavía no es compatible."
+  },
+  "コピーに失敗しました。": {
+    "en": "Failed to copy.",
+    "es": "No se pudo copiar."
+  },
+  "版履歴の読み込みに失敗しました。": {
+    "en": "Failed to load version history.",
+    "es": "No se pudo cargar el historial de versiones."
+  },
+  "版の復元に失敗しました。": {
+    "en": "Failed to restore the version.",
+    "es": "No se pudo restaurar la versión."
+  },
+  "フォルダのアップロードに失敗しました。": {
+    "en": "Folder upload failed.",
+    "es": "Error al subir la carpeta."
+  },
+  "バックアップ対象フォルダの情報を取得できませんでした。": {
+    "en": "The backup folder information could not be retrieved.",
+    "es": "No se pudo obtener la información de la carpeta de copia de seguridad."
+  },
+  "移動先の読み込みに失敗しました。": {
+    "en": "Failed to load destinations.",
+    "es": "No se pudieron cargar los destinos."
+  },
+  "フォルダのローカルパスを取得できませんでした。Electron の preload が最新か確認してから再度お試しください。アップロードだけ先に進めるとバックアップ設定欄に表示できないため、処理を中止しました。": {
+    "en": "The folder's local path could not be retrieved. Check that Electron preload is up to date and try again. The operation was stopped because continuing with the upload alone would prevent the folder from appearing in Backup settings.",
+    "es": "No se pudo obtener la ruta local de la carpeta. Comprueba que el preload de Electron esté actualizado e inténtalo de nuevo. La operación se detuvo porque continuar solo con la subida impediría que la carpeta apareciera en la configuración de copia de seguridad."
+  },
+  "ドラッグ&ドロップアップロードに失敗しました。": {
+    "en": "Drag-and-drop upload failed.",
+    "es": "Error en la subida mediante arrastrar y soltar."
+  },
+  "ストレージの提供を終了しました": {
+    "en": "Storage contribution has stopped.",
+    "es": "Se ha detenido la aportación de almacenamiento."
+  },
+  "ストレージの提供を終了に失敗しました。": {
+    "en": "Failed to stop storage contribution.",
+    "es": "No se pudo detener la aportación de almacenamiento."
+  },
+  "ストレージの提供を終了に失敗しました。再度「設定を保存」をクリックしてください": {
+    "en": "Failed to stop storage contribution. Click \"Save settings\" again.",
+    "es": "No se pudo detener la aportación de almacenamiento. Vuelve a hacer clic en «Guardar configuración»."
+  },
+  "提供容量を入力してください。提供をやめる場合は 0 を入力してください。": {
+    "en": "Enter the storage capacity. Enter 0 to stop contributing.",
+    "es": "Introduce la capacidad de almacenamiento. Introduce 0 para dejar de aportar."
+  },
+  "提供容量は 0 以上の整数で入力してください。": {
+    "en": "Enter a whole number of 0 or more for the storage capacity.",
+    "es": "Introduce un número entero igual o superior a 0 para la capacidad de almacenamiento."
+  },
+  "このPCで安全に提供できる上限は {value} GB です。": {
+    "en": "The safe contribution limit for this PC is {value} GB.",
+    "es": "El límite seguro de aportación para este PC es de {value} GB."
+  },
+  "node_id と node_api_key の発行に失敗しました。": {
+    "en": "Failed to issue node_id and node_api_key.",
+    "es": "No se pudieron emitir node_id y node_api_key."
+  },
+  "設定を保存しました。ストレージの提供を開始するには「ストレージの提供を開始する」をクリックしてください。": {
+    "en": "Settings saved. To start contributing storage, click \"Start contributing storage\".",
+    "es": "La configuración se ha guardado. Para empezar a aportar almacenamiento, haz clic en «Empezar a aportar almacenamiento»."
+  },
+  "ノード設定の保存に失敗しました。": {
+    "en": "Failed to save the node settings.",
+    "es": "No se pudo guardar la configuración del nodo."
+  },
+  "設定の保存に失敗しました。デスクトップアプリの起動設定を確認してください。": {
+    "en": "Failed to save the settings. Check the desktop app startup configuration.",
+    "es": "No se pudo guardar la configuración. Comprueba la configuración de inicio de la app de escritorio."
+  },
+  "デスクトップアプリ側のノード状態確認に失敗しました。": {
+    "en": "Failed to check the node status in the desktop app.",
+    "es": "No se pudo comprobar el estado del nodo en la app de escritorio."
+  },
+  "ローカルのストレージノードプロセスが起動状態になりませんでした。": {
+    "en": "The local storage node process did not reach the running state.",
+    "es": "El proceso local del nodo de almacenamiento no llegó a iniciarse."
+  },
+  "デスクトップアプリ側のノード停止に失敗しました。": {
+    "en": "Failed to stop the node in the desktop app.",
+    "es": "No se pudo detener el nodo en la app de escritorio."
+  },
+  "デスクトップアプリ側のノード起動に失敗しました。": {
+    "en": "Failed to start the node in the desktop app.",
+    "es": "No se pudo iniciar el nodo en la app de escritorio."
+  },
+  "デスクトップアプリ側のノード起動ブリッジが未接続です。": {
+    "en": "The desktop app bridge for starting the node is not connected.",
+    "es": "El puente de la app de escritorio para iniciar el nodo no está conectado."
+  },
+  "提供容量を入力してください。起動するには 1 以上の値が必要です。": {
+    "en": "Enter the storage capacity. A value of at least 1 is required to start.",
+    "es": "Introduce la capacidad de almacenamiento. Se necesita un valor mínimo de 1 para iniciar."
+  },
+  "ストレージの提供を開始するには、提供容量を 1 以上の整数で入力してください。": {
+    "en": "To start contributing storage, enter a whole number of at least 1.",
+    "es": "Para empezar a aportar almacenamiento, introduce un número entero igual o superior a 1."
+  },
+  "先に「設定を保存」をクリックして、ノード起動情報を発行してください。": {
+    "en": "Click \"Save settings\" first to generate the node startup information.",
+    "es": "Haz clic primero en «Guardar configuración» para generar la información de inicio del nodo."
+  },
+  "先に 1GB 以上の提供量を保存してください。": {
+    "en": "Save a contribution amount of at least 1 GB first.",
+    "es": "Guarda primero una aportación de al menos 1 GB."
+  },
+  "提供量を変更した場合は、先に「設定を保存」をクリックしてください。": {
+    "en": "If you changed the contribution amount, click \"Save settings\" first.",
+    "es": "Si has cambiado la cantidad aportada, haz clic primero en «Guardar configuración»."
+  },
+  "ストレージの提供を開始しました": {
+    "en": "Storage contribution has started.",
+    "es": "Se ha iniciado la aportación de almacenamiento."
+  },
+  "ストレージ提供の開始に失敗しました。": {
+    "en": "Failed to start storage contribution.",
+    "es": "No se pudo iniciar la aportación de almacenamiento."
+  },
+  "ストレージの提供を開始できませんでした。デスクトップアプリの起動設定を確認してください。": {
+    "en": "Storage contribution could not be started. Check the desktop app startup configuration.",
+    "es": "No se pudo iniciar la aportación de almacenamiento. Comprueba la configuración de inicio de la app de escritorio."
+  },
+  "提供容量GB": {
+    "en": "Storage contribution in GB",
+    "es": "Aportación de almacenamiento en GB"
   }
 
 };
@@ -1952,13 +2216,13 @@ function splitNameForCopy(name: string, isFolder: boolean): [string, string] {
   return [name.slice(0, firstDot), name.slice(firstDot)];
 }
 
-function dedupeCopyName(originalName: string, isFolder: boolean, exists: (candidate: string) => boolean): string {
+function dedupeCopyName(originalName: string, isFolder: boolean, copyLabel: string, exists: (candidate: string) => boolean): string {
   const [base, suffix] = splitNameForCopy(originalName, isFolder);
-  let candidate = `${base} コピー${suffix}`;
+  let candidate = `${base} ${copyLabel}${suffix}`;
   if (!exists(candidate)) return candidate;
   let idx = 2;
   while (true) {
-    candidate = `${base} コピー (${idx})${suffix}`;
+    candidate = `${base} ${copyLabel} (${idx})${suffix}`;
     if (!exists(candidate)) return candidate;
     idx += 1;
   }
@@ -2404,10 +2668,10 @@ export default function DriveLikeApp() {
     resolver?.(value);
   };
 
-  const verifyCurrentPassword = async (currentPassword: string, purpose = "この操作") => {
+  const verifyCurrentPassword = async (currentPassword: string, purpose = tx("この操作")) => {
     const trimmedEmail = email.trim();
     if (!trimmedEmail) {
-      throw new Error(`${purpose}にはログイン用メールアドレスが必要です。再ログイン後にお試しください。`);
+      throw new Error(tx("{purpose}にはログイン用メールアドレスが必要です。再ログイン後にお試しください。", { purpose }));
     }
     try {
       await api<AuthResponse>("/auth/login", {
@@ -2415,7 +2679,7 @@ export default function DriveLikeApp() {
         body: JSON.stringify({ email: trimmedEmail, password: currentPassword }),
       });
     } catch {
-      throw new Error("ログイン時パスワードが正しくありません。もう一度入力してください。");
+      throw new Error(tx("ログイン時パスワードが正しくありません。もう一度入力してください。"));
     }
   };
 
@@ -2646,8 +2910,8 @@ export default function DriveLikeApp() {
   const getBackupSourceDeviceDisplayLabel = (deviceLabel?: string | null) => {
     const safeLabel = normalizeDeviceLabel(deviceLabel);
     const safeCurrentLabel = normalizeDeviceLabel(currentDeviceLabel);
-    if (!safeLabel || safeLabel === "このデバイス" || safeLabel === "このPC") return "このPC";
-    if (safeCurrentLabel && safeLabel === safeCurrentLabel) return "このPC";
+    if (!safeLabel || safeLabel === "このデバイス" || safeLabel === "このPC") return tx("このPC");
+    if (safeCurrentLabel && safeLabel === safeCurrentLabel) return tx("このPC");
     return safeLabel;
   };
 
@@ -2685,15 +2949,15 @@ export default function DriveLikeApp() {
   const renderItemStatusIcon = (item: Item, context: "sync" | "normal") => {
     if (context === "sync") {
       if (!backupAutoRefreshEnabled || !getBackupSourceForItem(item)) return null;
-      return <LaptopMinimalCheck className="h-4 w-4 text-emerald-600" aria-label="自動バックアップ中" />;
+      return <LaptopMinimalCheck className="h-4 w-4 text-emerald-600" aria-label={tx("自動バックアップ中")} />;
     }
 
     if (isOfflineAvailableItem(item)) {
-      return <CloudDownload className="h-4 w-4 text-emerald-500" aria-label="オフライン利用中" />;
+      return <CloudDownload className="h-4 w-4 text-emerald-500" aria-label={tx("オフライン利用中")} />;
     }
 
     if (isSharedDisplayItem(item)) {
-      return <Users className="h-4 w-4 text-violet-600" aria-label="共有アイテム" />;
+      return <Users className="h-4 w-4 text-violet-600" aria-label={tx("共有アイテム")} />;
     }
 
     return null;
@@ -2782,16 +3046,16 @@ export default function DriveLikeApp() {
     .join("/");
 
   const summarizeBackupTargets = (targets: BackupTarget[]) => {
-    if (!targets.length) return "バックアップ対象なし";
+    if (!targets.length) return tx("バックアップ対象なし");
     if (targets.length === 1) return targets[0].local_path;
-    return `${targets[0].local_path} ほか ${targets.length - 1}件`;
+    return tx("{path} ほか {count}件", { path: targets[0].local_path, count: targets.length - 1 });
   };
 
   const upsertBackupTarget = (target: BackupTarget) => {
     const normalizedTarget = normalizeBackupSettingTarget(target);
     if (!isValidBackupSettingTarget(normalizedTarget)) {
       console.warn("invalid backup target ignored", normalizedTarget);
-      setError("バックアップ対象フォルダのクラウドIDを取得できなかったため、登録を中止しました。もう一度アップロードしてください。");
+      setError(tx("バックアップ対象フォルダのクラウドIDを取得できなかったため、登録を中止しました。もう一度アップロードしてください。"));
       return;
     }
     setBackupTargets((prev) => {
@@ -3021,7 +3285,7 @@ export default function DriveLikeApp() {
         remote_path: safeRemotePath,
         item_type: "file",
         display_name: safeRemotePath.split("/").pop() || safeRemotePath,
-        source_device_label: currentDeviceLabel || "このPC",
+        source_device_label: currentDeviceLabel || tx("このPC"),
         remote_item_id: remoteItemId || null,
       };
     }
@@ -3038,7 +3302,7 @@ export default function DriveLikeApp() {
       remote_path: rootRemotePath,
       item_type: "folder",
       display_name: rootRemotePath,
-      source_device_label: currentDeviceLabel || "このPC",
+      source_device_label: currentDeviceLabel || tx("このPC"),
       remote_item_id: remoteItemId || null,
       target_kind: "backup",
     };
@@ -3069,7 +3333,7 @@ export default function DriveLikeApp() {
       remote_path: actualRootRemotePath,
       item_type: "folder",
       display_name: actualRootRemotePath,
-      source_device_label: currentDeviceLabel || "このPC",
+      source_device_label: currentDeviceLabel || tx("このPC"),
       remote_item_id: rootRemoteItemId || null,
       target_kind: "backup",
     };
@@ -3112,13 +3376,13 @@ export default function DriveLikeApp() {
       const res = applyDesktopLocalCapacity(apiSummary, localCapacity);
       setProviderSummary(res);
       setProviderSummaryFetchedAt(Math.floor(Date.now() / 1000));
-      setProviderName(res.profile?.node_name || res.defaults.node_name || "マイノード");
+      setProviderName(res.profile?.node_name || res.defaults.node_name || tx("マイノード"));
       const nextCapacityGb = res.profile?.desired_capacity_gb ?? 0;
       setDesiredCapacityGb(nextCapacityGb);
       setDesiredCapacityInput(String(nextCapacityGb));
       setSelected(null);
     } catch (err: any) {
-      setError(err.message || "ノード情報の読み込みに失敗しました。");
+      setError(err.message || tx("ノード情報の読み込みに失敗しました。"));
     } finally {
       setProviderLoading(false);
     }
@@ -3189,7 +3453,7 @@ export default function DriveLikeApp() {
       if (!silent) setSelected(null);
       return runtimeTargets;
     } catch (err: any) {
-      if (!silent) setError(err.message || "同期設定の読み込みに失敗しました。");
+      if (!silent) setError(err.message || tx("同期設定の読み込みに失敗しました。"));
       else console.warn("silent sync summary refresh failed", err);
       return runtimeTargets;
     } finally {
@@ -3247,7 +3511,7 @@ export default function DriveLikeApp() {
           setSelectedIds([]);
         }
       } catch (err: any) {
-        if (!silent) setError(err.message || "バックアップ対象の読み込みに失敗しました。");
+        if (!silent) setError(err.message || tx("バックアップ対象の読み込みに失敗しました。"));
         else console.warn("silent sync tree refresh failed", err);
       } finally {
         if (!silent) setLoading(false);
@@ -3345,7 +3609,7 @@ export default function DriveLikeApp() {
         return;
       }
     } catch (err: any) {
-      setError(err.message || "読み込みに失敗しました。");
+      setError(err.message || tx("読み込みに失敗しました。"));
     } finally {
       setLoading(false);
     }
@@ -3636,7 +3900,7 @@ export default function DriveLikeApp() {
       setViewMode("home");
       setParentId(null);
     } catch (err: any) {
-      setError(err.message || "認証に失敗しました。");
+      setError(err.message || tx("認証に失敗しました。"));
     }
   };
 
@@ -3670,10 +3934,10 @@ export default function DriveLikeApp() {
     const storedName = localStorage.getItem("phase1_signup_display_name") || "";
     if (storedName.trim()) return storedName.trim();
     const safeEmail = (accountProfile?.email || email || "").trim();
-    return safeEmail ? safeEmail.split("@")[0] : "ユーザー";
+    return safeEmail ? safeEmail.split("@")[0] : tx("ユーザー");
   }, [accountProfile?.last_name, accountProfile?.first_name, accountProfile?.email, email]);
 
-  const accountEmail = (accountProfile?.email || email || "メールアドレス未設定").trim();
+  const accountEmail = (accountProfile?.email || email || tx("メールアドレス未設定")).trim();
   const accountCountryCode = String(accountProfile?.country_code || countryCode || localStorage.getItem("phase1_country_code") || "JP").toUpperCase();
   const accountCountryName = countryLabel(accountCountryCode);
   const accountLanguageCode = currentLanguageCode;
@@ -3690,7 +3954,7 @@ export default function DriveLikeApp() {
     if (!token) return;
     const normalizedCode = String(nextCountryCode || "").trim().toUpperCase();
     if (!COUNTRY_OPTIONS.some((entry) => entry.code === normalizedCode)) {
-      setError("選択できない国/地域です。");
+      setError(tx("選択できない国/地域です。"));
       return;
     }
     if (normalizedCode === accountCountryCode) return;
@@ -3714,8 +3978,8 @@ export default function DriveLikeApp() {
       setCountryCode(previousCountryCode);
       setAccountProfile((prev) => prev ? { ...prev, country_code: previousCountryCode } : prev);
       localStorage.setItem("phase1_country_code", previousCountryCode);
-      setError(err?.message || "国/地域の更新に失敗しました。");
-      void requestAppAlert(err?.message || "国/地域の更新に失敗しました。", "国/地域の更新");
+      setError(err?.message || tx("国/地域の更新に失敗しました。"));
+      void requestAppAlert(err?.message || tx("国/地域の更新に失敗しました。"), tx("国/地域の更新"));
     }
   };
 
@@ -3847,7 +4111,7 @@ export default function DriveLikeApp() {
     const file = files?.[0];
     if (!file) return;
     if (!file.type.startsWith("image/")) {
-      void requestAppAlert("画像ファイルを選択してください。", "アカウント画像");
+      void requestAppAlert(tx("画像ファイルを選択してください。"), tx("アカウント画像"));
       return;
     }
     const reader = new FileReader();
@@ -3865,7 +4129,7 @@ export default function DriveLikeApp() {
 
   const renderAccountAvatar = (sizeClass: string, iconClass: string) => (
     avatarDataUrl
-      ? <img src={avatarDataUrl} alt="アカウント画像" className={`${sizeClass} rounded-full object-cover`} />
+      ? <img src={avatarDataUrl} alt={tx("アカウント画像")} className={`${sizeClass} rounded-full object-cover`} />
       : <UserCircle2 className={iconClass} />
   );
 
@@ -3900,7 +4164,7 @@ export default function DriveLikeApp() {
         <div className="p-2 text-sm">
           <button
             type="button"
-            onClick={() => void requestAppAlert("設定画面はテスト版ではアカウントメニューに統合しています。", "設定")}
+            onClick={() => void requestAppAlert(tx("設定画面はテスト版ではアカウントメニューに統合しています。"), tx("設定"))}
             className="flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left hover:bg-slate-50"
           >
             <span className="inline-flex items-center gap-3 text-slate-500">
@@ -4556,7 +4820,7 @@ export default function DriveLikeApp() {
 
     const invalid = candidates.find((candidate) => !isValidShareRecipientEmail(candidate));
     if (invalid) {
-      setError("メールアドレスの形式が正しくありません。");
+      setError(tx("メールアドレスの形式が正しくありません。"));
       return false;
     }
 
@@ -4618,7 +4882,7 @@ export default function DriveLikeApp() {
 
     const recipientEmails = Array.from(new Set(shareRecipientEmails.concat(splitShareRecipientCandidates(pendingEmail))));
     if (!recipientEmails.length) {
-      setError("共有先のメールアドレスを入力してください。");
+      setError(tx("共有先のメールアドレスを入力してください。"));
       return;
     }
 
@@ -4635,13 +4899,13 @@ export default function DriveLikeApp() {
           }, token);
         }
       }
-      await requestAppAlert(`${shareDialogItems.length}件を ${recipientEmails.join("、")} の共有アイテムへ送信しました。`);
+      await requestAppAlert(tx("{count}件を {recipients} の共有アイテムへ送信しました。", { count: shareDialogItems.length, recipients: recipientEmails.join(", ") }));
       setShareDialogItems([]);
       setShareRecipientInput("");
       setShareRecipientEmails([]);
       setShareMessage("");
     } catch (err: any) {
-      setError(err.message || "共有の送信に失敗しました。");
+      setError(err.message || tx("共有の送信に失敗しました。"));
     } finally {
       setShareSending(false);
     }
@@ -4665,7 +4929,7 @@ export default function DriveLikeApp() {
   const downloadItem = async (item: Item) => {
     try {
       if (item.type !== "file") {
-        setError("フォルダのダウンロードはまだ未対応です。");
+        setError(tx("フォルダのダウンロードはまだ未対応です。"));
         return;
       }
 
@@ -4683,9 +4947,9 @@ export default function DriveLikeApp() {
           file_name: item.name || "download.bin",
         });
         if (!result?.ok || !result.local_path) {
-          throw new Error(result?.error || result?.message || "ダウンロード保存に失敗しました。");
+          throw new Error(result?.error || result?.message || tx("ダウンロード保存に失敗しました。"));
         }
-        await requestAppAlert(`ダウンロードしました: ${result.local_path}`);
+        await requestAppAlert(tx("ダウンロードしました: {path}", { path: result.local_path }));
         return;
       }
 
@@ -4708,12 +4972,12 @@ export default function DriveLikeApp() {
         } catch {
           detail = await response.text().catch(() => detail);
         }
-        throw new Error(detail || "ダウンロードに失敗しました。");
+        throw new Error(detail || tx("ダウンロードに失敗しました。"));
       }
       const blob = await response.blob();
       await saveBlobToBrowserDownloads(blob, item.name || "download.bin");
     } catch (err: any) {
-      setError(err.message || "ダウンロードに失敗しました。");
+      setError(err.message || tx("ダウンロードに失敗しました。"));
     }
   };
 
@@ -4721,7 +4985,7 @@ export default function DriveLikeApp() {
   const openItem = async (item: Item) => {
     try {
       if (viewMode === "trash") {
-        setError("ごみ箱内のファイルは開けません。復元してから開いてください。");
+        setError(tx("ごみ箱内のファイルは開けません。復元してから開いてください。"));
         return;
       }
       if (item.type === "folder") {
@@ -4729,7 +4993,7 @@ export default function DriveLikeApp() {
         return;
       }
       if (!desktopBridge?.openCloudFile) {
-        setError("デスクトップアプリ側のファイルを開くブリッジが未接続です。");
+        setError(tx("デスクトップアプリ側のファイルを開くブリッジが未接続です。"));
         return;
       }
 
@@ -4747,10 +5011,10 @@ export default function DriveLikeApp() {
         file_name: item.name || "download.bin",
       });
       if (!result?.ok) {
-        throw new Error(result?.error || result?.message || "ファイルを開けませんでした。");
+        throw new Error(result?.error || result?.message || tx("ファイルを開けませんでした。"));
       }
     } catch (err: any) {
-      setError(err?.message || String(err) || "ファイルを開けませんでした。");
+      setError(err?.message || String(err) || tx("ファイルを開けませんでした。"));
     } finally {
       setLoading(false);
     }
@@ -4762,14 +5026,14 @@ export default function DriveLikeApp() {
     const fileItems = targetItems.filter((item) => item.type === "file");
     const folderCount = targetItems.length - fileItems.length;
     if (!fileItems.length && folderCount > 0) {
-      await requestAppAlert("フォルダの一括ダウンロードはまだ未対応です。今回はファイルのみダウンロードできます。");
+      await requestAppAlert(tx("フォルダの一括ダウンロードはまだ未対応です。今回はファイルのみダウンロードできます。"));
       return;
     }
     for (const item of fileItems) {
       await downloadItem(item);
     }
     if (folderCount > 0) {
-      await requestAppAlert(`ファイル ${fileItems.length}件をダウンロードしました。フォルダ ${folderCount}件は一括ダウンロード未対応のためスキップしました。`);
+      await requestAppAlert(tx("ファイル {fileCount}件をダウンロードしました。フォルダ {folderCount}件は一括ダウンロード未対応のためスキップしました。", { fileCount: fileItems.length, folderCount }));
     }
   };
 
@@ -4785,7 +5049,7 @@ export default function DriveLikeApp() {
       clearSelection();
       await refresh(viewMode, parentId, activeQuery);
     } catch (err: any) {
-      setError(err.message || "コピーに失敗しました。");
+      setError(err.message || tx("コピーに失敗しました。"));
     } finally {
       setLoading(false);
     }
@@ -4800,7 +5064,7 @@ export default function DriveLikeApp() {
       const res = await api<VersionResponse>(`/items/${item.item_id}/versions`, {}, token);
       setVersionData(res);
     } catch (err: any) {
-      setError(err.message || "版履歴の読み込みに失敗しました。");
+      setError(err.message || tx("版履歴の読み込みに失敗しました。"));
     } finally {
       setVersionsLoading(false);
     }
@@ -4813,7 +5077,7 @@ export default function DriveLikeApp() {
       const res = await api<VersionResponse>(`/items/${itemId}/versions`, {}, token);
       setVersionData(res);
     } catch (err: any) {
-      setError(err.message || "版の復元に失敗しました。");
+      setError(err.message || tx("版の復元に失敗しました。"));
     }
   };
 
@@ -4879,12 +5143,12 @@ export default function DriveLikeApp() {
 
       if (!result?.ok) {
         if (!result?.cancelled) {
-          throw new Error(result?.error || result?.message || "フォルダのアップロードに失敗しました。");
+          throw new Error(result?.error || result?.message || tx("フォルダのアップロードに失敗しました。"));
         }
         return;
       }
       if (!result.target) {
-        throw new Error("バックアップ対象フォルダの情報を取得できませんでした。");
+        throw new Error(tx("バックアップ対象フォルダの情報を取得できませんでした。"));
       }
 
       const nextTargets = mergeBackupTargets(readStoredBackupTargets(), normalizeBackupSettingTarget(result.target));
@@ -4896,7 +5160,7 @@ export default function DriveLikeApp() {
       clearSelection();
       await refresh("sync", null, "");
     } catch (err: any) {
-      setError(err?.message || "フォルダのアップロードに失敗しました。");
+      setError(err?.message || tx("フォルダのアップロードに失敗しました。"));
     } finally {
       setLoading(false);
       if (folderUploadRef.current) folderUploadRef.current.value = "";
@@ -4946,7 +5210,7 @@ export default function DriveLikeApp() {
       setMoveTargets(folders.filter((folder) => !blocked.has(folder.item_id)));
       setMoveTargetParentId(item.parent_id || ROOT_ID);
     } catch (err: any) {
-      setError(err.message || "移動先の読み込みに失敗しました。");
+      setError(err.message || tx("移動先の読み込みに失敗しました。"));
       setMoveDialogItem(null);
     } finally {
       setMoveLoading(false);
@@ -4991,7 +5255,7 @@ export default function DriveLikeApp() {
     if (targetView === "sync" && includesFolder) {
       const missingLocalPath = candidates.some((candidate) => !String(candidate.absolutePath || "").trim());
       if (missingLocalPath) {
-        setError("フォルダのローカルパスを取得できませんでした。Electron の preload が最新か確認してから再度お試しください。アップロードだけ先に進めるとバックアップ設定欄に表示できないため、処理を中止しました。");
+        setError(tx("フォルダのローカルパスを取得できませんでした。Electron の preload が最新か確認してから再度お試しください。アップロードだけ先に進めるとバックアップ設定欄に表示できないため、処理を中止しました。"));
         if (folderUploadRef.current) folderUploadRef.current.value = "";
         return;
       }
@@ -5092,7 +5356,7 @@ export default function DriveLikeApp() {
               currentParent = existingFolderId;
               continue;
             }
-            const newName = dedupeCopyName(segment, true, (candidate) => folderIndex.has(`${currentParent}::${candidate}`));
+            const newName = dedupeCopyName(segment, true, tx("コピー"), (candidate) => folderIndex.has(`${currentParent}::${candidate}`));
             const created = await api<Item>("/items/folder", {
               method: "POST",
               body: JSON.stringify({ name: newName, parent_id: currentParent === ROOT_ID ? null : currentParent }),
@@ -5146,7 +5410,7 @@ export default function DriveLikeApp() {
           }
           if (decision === "copy") {
             targetItemId = null;
-            finalFileName = dedupeCopyName(fileName, false, (candidateName) => fileIndex.has(`${parentKey}::${candidateName}`));
+            finalFileName = dedupeCopyName(fileName, false, tx("コピー"), (candidateName) => fileIndex.has(`${parentKey}::${candidateName}`));
           }
         }
 
@@ -5224,7 +5488,7 @@ export default function DriveLikeApp() {
               remote_path: rootName,
               item_type: "folder",
               display_name: rootName,
-              source_device_label: currentDeviceLabel || "このPC",
+              source_device_label: currentDeviceLabel || tx("このPC"),
               remote_item_id: rootFolderId,
               target_kind: "backup",
             };
@@ -5257,7 +5521,7 @@ export default function DriveLikeApp() {
         setError("");
         return;
       }
-      setError(err.message || "ドラッグ&ドロップアップロードに失敗しました。");
+      setError(err.message || tx("ドラッグ&ドロップアップロードに失敗しました。"));
     } finally {
       setLoading(false);
       setUploadDragging(false);
@@ -5318,10 +5582,10 @@ export default function DriveLikeApp() {
       setCopiedLabel("");
       setSyncSummary((prev) => (prev ? { ...prev, clients: [] } : prev));
       await loadProviderSummary();
-      await requestAppAlert("ストレージの提供を終了しました");
+      await requestAppAlert(tx("ストレージの提供を終了しました"));
     } catch (err: any) {
-      setError(err.message || "ストレージの提供を終了に失敗しました。");
-      await requestAppAlert("ストレージの提供を終了に失敗しました。再度「設定を保存」をクリックしてください");
+      setError(err.message || tx("ストレージの提供を終了に失敗しました。"));
+      await requestAppAlert(tx("ストレージの提供を終了に失敗しました。再度「設定を保存」をクリックしてください"));
     } finally {
       setProviderSaving(false);
     }
@@ -5330,12 +5594,12 @@ export default function DriveLikeApp() {
   const saveProviderProfile = async () => {
     const rawCapacity = desiredCapacityInput.trim();
     if (rawCapacity === "") {
-      setError("提供容量を入力してください。提供をやめる場合は 0 を入力してください。");
+      setError(tx("提供容量を入力してください。提供をやめる場合は 0 を入力してください。"));
       return;
     }
     const normalizedCapacity = Number(rawCapacity);
     if (!Number.isFinite(normalizedCapacity) || normalizedCapacity < 0) {
-      setError("提供容量は 0 以上の整数で入力してください。");
+      setError(tx("提供容量は 0 以上の整数で入力してください。"));
       return;
     }
 
@@ -5350,7 +5614,7 @@ export default function DriveLikeApp() {
       const localCapacity = await loadDesktopLocalCapacity();
       const localOfferableGb = getLocalOfferableGb(localCapacity);
       if (localOfferableGb != null && normalizedCapacity > localOfferableGb) {
-        throw new Error(`このPCで安全に提供できる上限は ${localOfferableGb} GB です。`);
+        throw new Error(tx("このPCで安全に提供できる上限は {value} GB です。", { value: localOfferableGb }));
       }
 
       const apiSummary = await api<NodeProviderSummary>("/node/provider/profile", {
@@ -5366,13 +5630,13 @@ export default function DriveLikeApp() {
       setCopiedLabel("");
 
       if (!res.launch) {
-        throw new Error("node_id と node_api_key の発行に失敗しました。");
+        throw new Error(tx("node_id と node_api_key の発行に失敗しました。"));
       }
 
-      await requestAppAlert("設定を保存しました。ストレージの提供を開始するには「ストレージの提供を開始する」をクリックしてください。");
+      await requestAppAlert(tx("設定を保存しました。ストレージの提供を開始するには「ストレージの提供を開始する」をクリックしてください。"));
     } catch (err: any) {
-      setError(err.message || "ノード設定の保存に失敗しました。");
-      await requestAppAlert("設定の保存に失敗しました。デスクトップアプリの起動設定を確認してください。");
+      setError(err.message || tx("ノード設定の保存に失敗しました。"));
+      await requestAppAlert(tx("設定の保存に失敗しました。デスクトップアプリの起動設定を確認してください。"));
     } finally {
       setProviderSaving(false);
     }
@@ -5392,7 +5656,7 @@ export default function DriveLikeApp() {
       setCopiedLabel(label);
       window.setTimeout(() => setCopiedLabel(""), 1600);
     } catch {
-      setError("コピーに失敗しました。");
+      setError(tx("コピーに失敗しました。"));
     }
   };
 
@@ -5420,13 +5684,13 @@ ${logTail.slice(-3000)}` : detail);
     if (desktopBridge?.getNodeStatus) {
       return ensureDesktopBridgeResponseOk(
         await desktopBridge.getNodeStatus(),
-        "デスクトップアプリ側のノード状態確認に失敗しました。"
+        tx("デスクトップアプリ側のノード状態確認に失敗しました。")
       );
     }
     if (desktopBridge?.invoke) {
       return ensureDesktopBridgeResponseOk(
         await desktopBridge.invoke("phase1-node:status"),
-        "デスクトップアプリ側のノード状態確認に失敗しました。"
+        tx("デスクトップアプリ側のノード状態確認に失敗しました。")
       );
     }
     return null;
@@ -5459,7 +5723,7 @@ ${logTail.slice(-3000)}`;
     const status = await getNodeStatusWithDesktopBridge();
     const failureText = getNodeStatusFailureText(status);
     if (failureText) throw new Error(failureText);
-    throw new Error("ローカルのストレージノードプロセスが起動状態になりませんでした。");
+    throw new Error(tx("ローカルのストレージノードプロセスが起動状態になりませんでした。"));
   };
 
   const stopNodeWithDesktopBridge = async () => {
@@ -5468,14 +5732,14 @@ ${logTail.slice(-3000)}`;
     if (desktopBridge?.stopNode) {
       return ensureDesktopBridgeResponseOk(
         await desktopBridge.stopNode(),
-        "デスクトップアプリ側のノード停止に失敗しました。"
+        tx("デスクトップアプリ側のノード停止に失敗しました。")
       );
     }
 
     if (desktopBridge?.invoke) {
       return ensureDesktopBridgeResponseOk(
         await desktopBridge.invoke("phase1-node:stop"),
-        "デスクトップアプリ側のノード停止に失敗しました。"
+        tx("デスクトップアプリ側のノード停止に失敗しました。")
       );
     }
 
@@ -5505,35 +5769,35 @@ ${logTail.slice(-3000)}`;
     if (desktopBridge?.startNode) {
       return ensureDesktopBridgeResponseOk(
         await desktopBridge.startNode(launchForDesktop),
-        "デスクトップアプリ側のノード起動に失敗しました。"
+        tx("デスクトップアプリ側のノード起動に失敗しました。")
       );
     }
 
     if (desktopBridge?.invoke) {
       return ensureDesktopBridgeResponseOk(
         await desktopBridge.invoke("phase1-node:start", launchForDesktop),
-        "デスクトップアプリ側のノード起動に失敗しました。"
+        tx("デスクトップアプリ側のノード起動に失敗しました。")
       );
     }
 
-    throw new Error("デスクトップアプリ側のノード起動ブリッジが未接続です。");
+    throw new Error(tx("デスクトップアプリ側のノード起動ブリッジが未接続です。"));
   };
 
   const startProviderNode = async () => {
     const rawCapacity = desiredCapacityInput.trim();
     if (rawCapacity === "") {
-      setError("提供容量を入力してください。起動するには 1 以上の値が必要です。");
+      setError(tx("提供容量を入力してください。起動するには 1 以上の値が必要です。"));
       return;
     }
 
     const normalizedCapacity = Number(rawCapacity);
     if (!Number.isFinite(normalizedCapacity) || normalizedCapacity <= 0) {
-      setError("ストレージの提供を開始するには、提供容量を 1 以上の整数で入力してください。");
+      setError(tx("ストレージの提供を開始するには、提供容量を 1 以上の整数で入力してください。"));
       return;
     }
 
     if (!providerSummary?.launch) {
-      setError("先に「設定を保存」をクリックして、ノード起動情報を発行してください。");
+      setError(tx("先に「設定を保存」をクリックして、ノード起動情報を発行してください。"));
       return;
     }
 
@@ -5543,11 +5807,11 @@ ${logTail.slice(-3000)}`;
       0
     );
     if (!Number.isFinite(savedCapacityGb) || savedCapacityGb <= 0) {
-      setError("先に 1GB 以上の提供量を保存してください。");
+      setError(tx("先に 1GB 以上の提供量を保存してください。"));
       return;
     }
     if (savedCapacityGb !== normalizedCapacity) {
-      setError("提供量を変更した場合は、先に「設定を保存」をクリックしてください。");
+      setError(tx("提供量を変更した場合は、先に「設定を保存」をクリックしてください。"));
       return;
     }
 
@@ -5557,17 +5821,17 @@ ${logTail.slice(-3000)}`;
       const localCapacity = await loadDesktopLocalCapacity();
       const localOfferableGb = getLocalOfferableGb(localCapacity);
       if (localOfferableGb != null && normalizedCapacity > localOfferableGb) {
-        throw new Error(`このPCで安全に提供できる上限は ${localOfferableGb} GB です。`);
+        throw new Error(tx("このPCで安全に提供できる上限は {value} GB です。", { value: localOfferableGb }));
       }
 
       await startNodeWithDesktopBridge(providerSummary.launch, normalizedCapacity);
       await waitForLocalNodeProcessAfterStart();
       await sleep(4000);
       await loadProviderSummary();
-      await requestAppAlert("ストレージの提供を開始しました");
+      await requestAppAlert(tx("ストレージの提供を開始しました"));
     } catch (err: any) {
-      setError(err.message || "ストレージ提供の開始に失敗しました。");
-      await requestAppAlert("ストレージの提供を開始できませんでした。デスクトップアプリの起動設定を確認してください。");
+      setError(err.message || tx("ストレージ提供の開始に失敗しました。"));
+      await requestAppAlert(tx("ストレージの提供を開始できませんでした。デスクトップアプリの起動設定を確認してください。"));
     } finally {
       setProviderStarting(false);
     }
@@ -6542,7 +6806,7 @@ ${logTail.slice(-3000)}`;
                             <div className="mt-2 text-xs leading-5 text-slate-500">{tx("このPCの空き容量をもとに、安全に提供できる上限を表示しています。")}</div>
                           </div>
                           <div className="mt-6 flex items-center justify-between text-sm"><label className="font-medium text-slate-700">{tx("提供容量")}</label><span className="rounded-full bg-sky-50 px-3 py-1 font-medium text-sky-700">{desiredCapacityInput.trim() === "" ? "—" : `${desiredCapacityInput} GB`}</span></div>
-                          <input type="range" min={0} max={providerSummary?.local_capacity?.offerable_gb || providerSummary?.defaults.suggested_slider_max_gb || 2000} step={1} value={desiredCapacityGb} onChange={(e) => { const next = Number(e.target.value); setDesiredCapacityGb(next); setDesiredCapacityInput(String(next)); }} className="mt-4 w-full accent-sky-600" aria-label="提供容量GB" />
+                          <input type="range" min={0} max={providerSummary?.local_capacity?.offerable_gb || providerSummary?.defaults.suggested_slider_max_gb || 2000} step={1} value={desiredCapacityGb} onChange={(e) => { const next = Number(e.target.value); setDesiredCapacityGb(next); setDesiredCapacityInput(String(next)); }} className="mt-4 w-full accent-sky-600" aria-label={tx("提供容量GB")} />
                           <div className="mt-4 grid gap-3 sm:grid-cols-[180px_1fr] sm:items-center">
                             <div className="text-sm text-slate-500">{tx("細かく入力したい場合")}</div>
                             <div className="flex items-center gap-3"><input type="number" min={0} max={providerSummary?.local_capacity?.offerable_gb || 999999} value={desiredCapacityInput} onChange={(e) => { const raw = e.target.value; if (raw === "") { setDesiredCapacityInput(""); return; } if (!/^\d+$/.test(raw)) return; const hardMax = providerSummary?.local_capacity?.offerable_gb || 999999; const next = Math.min(hardMax, Number(raw)); setDesiredCapacityGb(next); setDesiredCapacityInput(String(next)); }} className="w-40 rounded-2xl border border-slate-200 px-4 py-3 outline-none focus:ring-2 focus:ring-sky-500" /><span className="text-sm text-slate-500">GB</span></div>
@@ -6672,7 +6936,7 @@ ${logTail.slice(-3000)}`;
                                 </span>
                               </span>
                             </div>
-                            <div className="flex h-5 w-5 items-center justify-center" title={renderItemStatusIcon(item, "sync") ? "自動バックアップ中" : undefined}>
+                            <div className="flex h-5 w-5 items-center justify-center" title={renderItemStatusIcon(item, "sync") ? tx("自動バックアップ中") : undefined}>
                               {renderItemStatusIcon(item, "sync")}
                             </div>
                             <div className="min-w-0 text-sm text-slate-600">
