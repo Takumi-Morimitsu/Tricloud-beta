@@ -21,7 +21,7 @@ import os
 import time
 import uuid
 from datetime import datetime
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import zmq
@@ -44,6 +44,48 @@ from object_gc import (
     mark_object_gc_task_failed,
     mark_object_gc_task_sent,
 )
+from download_failover import DownloadFailoverState
+from repair_transfer import RepairTransferState
+from replica_health_service import (
+    fetch_download_candidates,
+    init_storage_maintenance_schema,
+    mark_replica_failure,
+    mark_replica_healthy,
+    mark_replicas_healthy,
+    record_node_transfer_metric,
+)
+from storage_audit_service import (
+    AUDIT_MAX_ATTEMPTS,
+    AUDIT_TIMEOUT_SEC,
+    claim_due_audit_jobs,
+    complete_audit_job,
+    create_repair_verification_audit,
+    init_storage_audit_schema,
+    recover_stale_audit_jobs,
+    schedule_due_audit_jobs,
+)
+from replica_repair_service import (
+    REPAIR_LEASE_SEC,
+    REPAIR_SOURCE_AUDIT_VALID_SEC,
+    claim_due_repair_jobs,
+    claim_repair_cleanup_tasks,
+    complete_repair_job,
+    enqueue_repair_job,
+    fetch_repair_job_statuses,
+    init_replica_repair_schema,
+    mark_repair_cleanup_result,
+    mark_repair_copying,
+    mark_repair_target_started,
+    mark_repair_verifying,
+    note_source_failure,
+    queue_repair_cleanup,
+    recover_stale_repair_jobs,
+    renew_repair_lease,
+    schedule_repair_retry,
+    select_and_reserve_target,
+    select_source_candidates,
+    update_repair_progress,
+)
 from auth_util import jwt_decode, JWT_SECRET  # type: ignore
 
 ROOT_ID = "root"
@@ -65,6 +107,29 @@ NODE_ZMQ_HEARTBEAT_TTL_MS = int(os.environ.get("NODE_ZMQ_HEARTBEAT_TTL_MS", "150
 NODE_ZMQ_HANDSHAKE_IVL_MS = int(os.environ.get("NODE_ZMQ_HANDSHAKE_IVL_MS", "5000"))
 NODE_ONLINE_WINDOW_SEC = int(os.environ.get("NODE_ONLINE_WINDOW_SEC", "20"))
 NODE_HEARTBEAT_LOG_INTERVAL_SEC = int(os.environ.get("NODE_HEARTBEAT_LOG_INTERVAL_SEC", "60"))
+
+# Replica download failover.  The per-node timeout stays below the UI bridge's
+# default 15 second receive timeout; a retry status is also sent between attempts.
+DOWNLOAD_NODE_TIMEOUT_SEC = float(os.environ.get("DOWNLOAD_NODE_TIMEOUT_SEC", "4"))
+DOWNLOAD_MAX_REPLICA_ATTEMPTS = int(os.environ.get("DOWNLOAD_MAX_REPLICA_ATTEMPTS", "3"))
+
+# Periodic ciphertext audits.  The implementation is complete but remains
+# opt-in so a schema migration never starts production I/O by itself.
+STORAGE_AUDIT_ENABLED = os.environ.get("STORAGE_AUDIT_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+AUDIT_SCHEDULE_INTERVAL_SEC = float(os.environ.get("AUDIT_SCHEDULE_INTERVAL_SEC", "5"))
+AUDIT_TARGET_AGE_SEC = int(os.environ.get("AUDIT_TARGET_AGE_SEC", str(72 * 3600)))
+AUDIT_MAX_INFLIGHT = int(os.environ.get("AUDIT_MAX_INFLIGHT", "16"))
+AUDIT_SCHEDULE_BATCH = int(os.environ.get("AUDIT_SCHEDULE_BATCH", "4"))
+
+# Encrypted DataServer-relayed repairs.  Queue creation and execution have
+# separate feature flags to support observation -> approval -> automation.
+REPLICA_REPAIR_EXECUTION_ENABLED = os.environ.get("REPLICA_REPAIR_EXECUTION_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+REPAIR_POLL_INTERVAL_SEC = float(os.environ.get("REPAIR_POLL_INTERVAL_SEC", "1"))
+REPAIR_MAX_INFLIGHT = int(os.environ.get("REPAIR_MAX_INFLIGHT", "2"))
+REPAIR_MAX_SOURCE_ATTEMPTS = int(os.environ.get("REPAIR_MAX_SOURCE_ATTEMPTS", "3"))
+REPAIR_STEP_TIMEOUT_SEC = float(os.environ.get("REPAIR_STEP_TIMEOUT_SEC", "15"))
+REPAIR_PROGRESS_FLUSH_BYTES = int(os.environ.get("REPAIR_PROGRESS_FLUSH_BYTES", str(64 * 1024 * 1024)))
+REPAIR_CLEANUP_BATCH = int(os.environ.get("REPAIR_CLEANUP_BATCH", "20"))
 
 
 def jdump(obj: Any) -> bytes:
@@ -115,14 +180,14 @@ class UploadSessionCache:
 class TransferCtx:
     transfer_id: str
     client_id: bytes
-    node_id: str
     file_object_id: str
     total_chunks: int
     charge_user_id: str
     is_shared: bool
+    failover: DownloadFailoverState
     bytes_since_flush: int = 0
-    got: Set[int] = field(default_factory=set)
     aborted_by_cap: bool = False
+    client_ready_sent: bool = False
 
 
 
@@ -130,6 +195,7 @@ class TransferCtx:
 @dataclass
 class AuditPending:
     event_id: str
+    audit_job_id: str
     node_id: str
     file_object_id: str
     chunk_id: int
@@ -137,6 +203,8 @@ class AuditPending:
     length: int
     expected_hash: str
     sent_ts: float
+    purpose: str = "scheduled"
+    repair_job_id: Optional[str] = None
 class DataServer:
     def __init__(self, client_endpoint: str = "tcp://*:8888", node_endpoint: str = "tcp://*:9999"):
         self.client_endpoint = client_endpoint
@@ -170,6 +238,9 @@ class DataServer:
         # 簡易キャッシュ（プロトタイプ）
         self.uploads: Dict[str, UploadSessionCache] = {}
         self.transfers: Dict[str, TransferCtx] = {}
+        # node attempt id -> stable client transfer id.  A fresh id is used for
+        # every replica attempt so delayed frames from an old node are ignored.
+        self.node_transfer_index: Dict[str, str] = {}
 
         # In-memory heartbeat state is used only for concise diagnostics.
         # PostgreSQL remains the source of truth for online/offline status.
@@ -191,11 +262,22 @@ class DataServer:
         init_schema()
         ensure_default_plan()
         self._init_node_heartbeat_stats_schema()
+        init_storage_maintenance_schema()
+        init_storage_audit_schema()
+        init_replica_repair_schema()
 
         # --- audit (challenge-response) ---
         self.audit_pending: Dict[str, AuditPending] = {}
-        self._next_audit_ts: float = time.time() + 5.0
-        self._init_audit_schema()
+        self.audit_worker_id = f"dataserver-audit:{uuid.uuid4().hex}"
+        self._next_audit_ts: float = time.time() + 1.0
+
+        # --- encrypted replica repair ---
+        self.repairs: Dict[str, RepairTransferState] = {}
+        self.repair_source_index: Dict[str, str] = {}
+        self.repair_target_index: Dict[str, str] = {}
+        self.repair_worker_id = f"dataserver-repair:{uuid.uuid4().hex}"
+        self._next_repair_poll_ts: float = time.time() + 1.0
+        self._next_repair_cleanup_ts: float = time.time() + 1.0
 
         # --- object GC queue ---
         init_object_gc_schema()
@@ -285,6 +367,29 @@ class DataServer:
                     )
             conn.commit()
 
+    def _mark_committed_replicas_healthy(self, file_object_id: str, node_ids: List[str]) -> None:
+        """Record a successful all-node commit check/finalize observation."""
+        try:
+            with db_conn() as conn:
+                with conn.cursor() as cur:
+                    mark_replicas_healthy(
+                        cur,
+                        file_object_id=str(file_object_id),
+                        node_ids=[str(node_id) for node_id in node_ids],
+                        verified=True,
+                    )
+                conn.commit()
+        except Exception as exc:
+            # The user upload is already durable at this point.  Health
+            # bookkeeping failure must be visible but must not undo it.
+            _log_event(
+                "ERROR",
+                "committed replica health update failed",
+                file_object_id=file_object_id,
+                node_ids=list(node_ids),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
     def _init_node_heartbeat_stats_schema(self) -> None:
         """ノード heartbeat の月次表示用集計テーブルを作成する。"""
         with db_conn() as conn:
@@ -293,63 +398,188 @@ class DataServer:
             conn.commit()
 
     def _init_audit_schema(self) -> None:
-        """テスト版向けの監査補助テーブルを作成する。
+        """Compatibility entry point retained for older startup wrappers."""
+        init_storage_audit_schema()
 
-        現在の node.py は audit challenge には未対応なので、スケジューリング側は no-op にしている。
-        ただしアップロード時の chunk_audit_slices 保存は行われるため、必要テーブルだけ作成する。
-        """
-        with db_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS chunk_audit_slices (
-                        file_object_id TEXT NOT NULL,
-                        chunk_id INTEGER NOT NULL,
-                        slice_index INTEGER NOT NULL,
-                        byte_offset INTEGER NOT NULL,
-                        length INTEGER NOT NULL,
-                        hash_hex TEXT NOT NULL,
-                        created_at INTEGER NOT NULL,
-                        PRIMARY KEY (file_object_id, chunk_id, slice_index)
-                    )
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS chunk_audit_results (
-                        event_id TEXT PRIMARY KEY,
-                        status TEXT NOT NULL,
-                        got_hash TEXT,
-                        latency_ms INTEGER,
-                        created_at INTEGER NOT NULL
-                    )
-                    """
-                )
-            conn.commit()
+    def _send_audit_job(self, job: Dict[str, Any]) -> None:
+        audit_job_id = str(job["audit_job_id"])
+        event_id = str(job.get("current_event_id") or audit_job_id)
+        pending = AuditPending(
+            event_id=event_id,
+            audit_job_id=audit_job_id,
+            node_id=str(job["node_id"]),
+            file_object_id=str(job["file_object_id"]),
+            chunk_id=int(job["chunk_id"]),
+            offset=int(job["byte_offset"]),
+            length=int(job["length"]),
+            expected_hash=str(job["expected_hash"]),
+            sent_ts=time.time(),
+            purpose=str(job.get("purpose") or "scheduled"),
+            repair_job_id=None if not job.get("repair_job_id") else str(job["repair_job_id"]),
+        )
+        self.audit_pending[event_id] = pending
+        try:
+            self._send_node_json(
+                pending.node_id,
+                {
+                    "op": "audit_slice",
+                    "event_id": event_id,
+                    "file_object_id": pending.file_object_id,
+                    "chunk_id": pending.chunk_id,
+                    "offset": pending.offset,
+                    "length": pending.length,
+                },
+            )
+        except Exception as exc:
+            self._apply_audit_result(
+                event_id,
+                "error",
+                "",
+                0,
+                detail=f"audit_send_failed:{type(exc).__name__}",
+            )
 
     def _schedule_one_audit(self) -> None:
-        """node.py 側が audit challenge 未対応のため、テスト版では無効化する。"""
-        return
+        """Persist, claim, and send a bounded batch of due audit challenges."""
+        if not STORAGE_AUDIT_ENABLED and not REPLICA_REPAIR_EXECUTION_ENABLED:
+            return
+        now_wall = time.time()
+        if now_wall < self._next_audit_ts:
+            return
+        self._next_audit_ts = now_wall + max(0.5, AUDIT_SCHEDULE_INTERVAL_SEC)
+        available = max(0, max(1, AUDIT_MAX_INFLIGHT) - len(self.audit_pending))
+        if available <= 0:
+            return
 
-    def _apply_audit_result(self, event_id: str, status: str, got_hash: str, latency_ms: int) -> None:
-        """audit challenge を後日有効化した場合の結果保存口。現状は安全な no-op。"""
+        jobs: List[Dict[str, Any]] = []
         try:
             with db_conn() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO chunk_audit_results(event_id,status,got_hash,latency_ms,created_at)
-                        VALUES (%s,%s,%s,%s,%s)
-                        ON CONFLICT (event_id) DO UPDATE SET
-                          status=EXCLUDED.status,
-                          got_hash=EXCLUDED.got_hash,
-                          latency_ms=EXCLUDED.latency_ms
-                        """,
-                        (str(event_id), str(status), str(got_hash or ""), int(latency_ms or 0), int(now_ts())),
+                with conn.cursor(row_factory=dict_row) as cur:
+                    recover_stale_audit_jobs(
+                        cur,
+                        exclude_event_ids=list(self.audit_pending),
+                    )
+                    if STORAGE_AUDIT_ENABLED:
+                        schedule_due_audit_jobs(
+                            cur,
+                            due_before=int(now_ts()) - max(1, AUDIT_TARGET_AGE_SEC),
+                            online_after=int(now_ts()) - NODE_ONLINE_WINDOW_SEC,
+                            limit=min(available, max(1, AUDIT_SCHEDULE_BATCH)),
+                        )
+                    jobs = claim_due_audit_jobs(
+                        cur,
+                        worker_id=self.audit_worker_id,
+                        limit=min(available, max(1, AUDIT_SCHEDULE_BATCH)),
+                        include_scheduled=STORAGE_AUDIT_ENABLED,
                     )
                 conn.commit()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_event("ERROR", "audit scheduling failed", error=f"{type(exc).__name__}: {exc}")
+            return
+
+        for job in jobs:
+            self._send_audit_job(job)
+
+    def _apply_audit_result(
+        self,
+        event_id: str,
+        status: str,
+        got_hash: str,
+        latency_ms: int,
+        *,
+        detail: Optional[str] = None,
+    ) -> None:
+        """Apply one response idempotently and connect failures to repair."""
+        pending = self.audit_pending.pop(str(event_id), None)
+        repair_action: Optional[str] = None
+        repair_job_id: Optional[str] = pending.repair_job_id if pending else None
+        result: Dict[str, Any] = {}
+        try:
+            with db_conn() as conn:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    result = complete_audit_job(
+                        cur,
+                        audit_job_id=str(pending.audit_job_id if pending else event_id),
+                        event_id=str(event_id),
+                        outcome=str(status),
+                        got_hash=str(got_hash or ""),
+                        latency_ms=max(0, int(latency_ms or 0)),
+                    )
+                    if result.get("repair_needed"):
+                        enqueue_repair_job(
+                            cur,
+                            file_object_id=str(result["file_object_id"]),
+                            reason=f"audit_{result.get('outcome') or 'failed'}",
+                        )
+
+                    if result.get("purpose") == "repair_verify" and result.get("repair_job_id"):
+                        repair_job_id = str(result["repair_job_id"])
+                        if result.get("outcome") == "ok" and result.get("status") == "completed":
+                            completed = complete_repair_job(
+                                cur,
+                                repair_job_id=repair_job_id,
+                                target_node_id=str(result["node_id"]),
+                            )
+                            if completed.get("applied") or completed.get("reason") == "already_completed":
+                                repair_action = "completed"
+                            else:
+                                schedule_repair_retry(
+                                    cur,
+                                    repair_job_id=repair_job_id,
+                                    error_code="verification_publish_failed",
+                                    detail=str(completed.get("reason") or detail or "unknown"),
+                                )
+                                repair_action = "retry"
+                        elif result.get("terminal"):
+                            schedule_repair_retry(
+                                cur,
+                                repair_job_id=repair_job_id,
+                                error_code=f"verification_{result.get('outcome') or 'failed'}",
+                                detail=detail,
+                            )
+                            repair_action = "retry"
+                conn.commit()
+        except Exception as exc:
+            _log_event(
+                "ERROR",
+                "audit result persistence failed",
+                audit_job_id=str(pending.audit_job_id if pending else ""),
+                event_id=str(event_id),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return
+
+        if repair_job_id and repair_action in {"completed", "retry"}:
+            ctx = self.repairs.get(repair_job_id)
+            if ctx and repair_action == "completed":
+                if ctx.current_source_node_id:
+                    self._record_repair_metric(
+                        ctx,
+                        node_id=ctx.current_source_node_id,
+                        operation="repair_source",
+                        success=True,
+                    )
+                self._record_repair_metric(
+                    ctx,
+                    node_id=ctx.target_node_id,
+                    operation="repair_target",
+                    success=True,
+                )
+            if ctx and repair_action == "retry":
+                self._abort_repair_transport(ctx)
+            if ctx:
+                self._discard_repair_context(ctx)
+        _log_event(
+            "INFO" if result.get("outcome") == "ok" else "WARN",
+            "storage audit completed",
+            audit_job_id=result.get("audit_job_id"),
+            event_id=str(event_id),
+            file_object_id=result.get("file_object_id"),
+            node_id=result.get("node_id"),
+            outcome=result.get("outcome"),
+            status=result.get("status"),
+            purpose=result.get("purpose"),
+        )
 
     def _node_api_key_valid(self, node_id: str, node_api_key: str) -> bool:
         """node_profiles に保存された API キーと一致する heartbeat だけを受け付ける。"""
@@ -395,6 +625,7 @@ class DataServer:
 
         capacity = int(payload.get("capacity_bytes", 0))
         meta_json = json.dumps(payload.get("meta", payload.get("meta_json", {})), ensure_ascii=False)
+        failure_domain = str(payload.get("failure_domain", "") or "").strip() or None
         previous_accepted = self._heartbeat_last_accepted.get(node_id)
 
         try:
@@ -402,15 +633,16 @@ class DataServer:
                 with conn.cursor(row_factory=dict_row) as cur:
                     cur.execute(
                         """
-                        INSERT INTO nodes(node_id,last_seen,capacity_bytes,reserved_bytes,meta_json)
-                        VALUES (%s,%s,%s,COALESCE((SELECT reserved_bytes FROM nodes WHERE node_id=%s),0),%s)
+                        INSERT INTO nodes(node_id,last_seen,capacity_bytes,reserved_bytes,meta_json,failure_domain)
+                        VALUES (%s,%s,%s,COALESCE((SELECT reserved_bytes FROM nodes WHERE node_id=%s),0),%s,%s)
                         ON CONFLICT (node_id) DO UPDATE SET
                           last_seen=EXCLUDED.last_seen,
                           capacity_bytes=EXCLUDED.capacity_bytes,
-                          meta_json=EXCLUDED.meta_json
+                          meta_json=EXCLUDED.meta_json,
+                          failure_domain=COALESCE(EXCLUDED.failure_domain,nodes.failure_domain)
                         RETURNING reserved_bytes, capacity_bytes
                         """,
-                        (node_id, ts, capacity, node_id, meta_json),
+                        (node_id, ts, capacity, node_id, meta_json, failure_domain),
                     )
                     row = cur.fetchone() or {}
                     record_node_heartbeat_sample(
@@ -767,14 +999,15 @@ class DataServer:
             file_object_id = up.file_object_id
             chunk_id = int(s(frames[2]))
             blob = frames[4]
-            SLICE_LEN = int(os.environ.get("AUDIT_SLICE_LEN", "1024"))
+            configured_slice_len = max(1, int(os.environ.get("AUDIT_SLICE_LEN", "1024")))
             SLICE_N = int(os.environ.get("AUDIT_SLICES_PER_CHUNK", "3"))
-            if len(blob) >= SLICE_LEN:
+            slice_len = min(configured_slice_len, len(blob))
+            if slice_len > 0:
                 with db_conn() as conn:
                     with conn.cursor() as cur:
                         for i in range(SLICE_N):
-                            off = 0 if len(blob) == SLICE_LEN else (int.from_bytes(os.urandom(4), "big") % (len(blob) - SLICE_LEN + 1))
-                            seg = blob[off:off+SLICE_LEN]
+                            off = 0 if len(blob) == slice_len else (int.from_bytes(os.urandom(4), "big") % (len(blob) - slice_len + 1))
+                            seg = blob[off:off+slice_len]
                             h = sha256_hex(seg)
                             cur.execute(
                                 """
@@ -782,11 +1015,17 @@ class DataServer:
                                 VALUES (%s,%s,%s,%s,%s,%s,%s)
                                 ON CONFLICT (file_object_id,chunk_id,slice_index) DO NOTHING
                                 """,
-                                (file_object_id, chunk_id, i, int(off), int(SLICE_LEN), h, now_ts())
+                                (file_object_id, chunk_id, i, int(off), int(slice_len), h, now_ts())
                             )
                     conn.commit()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_event(
+                "ERROR",
+                "audit slice persistence failed",
+                session_id=session_id,
+                file_object_id=up.file_object_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
 
         # 3ノードへ転送
         for nid in up.node_ids:
@@ -844,6 +1083,32 @@ class DataServer:
         shared_mode = str(row["shared_mode"] or "normal")
         shared_parent_id = row["shared_parent_id"]
         shared_replace_item_id = row["shared_replace_item_id"]
+
+        # Zero-byte objects have no data frame from which to derive a slice.
+        # A trusted metadata tag lets the same audit/repair pipeline verify
+        # that the node finalized the expected empty object.
+        if file_size == 0:
+            try:
+                metadata_hash = sha256_hex(f"meta:0:{chunk_size}:0".encode("utf-8"))
+                with db_conn() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            INSERT INTO chunk_audit_slices(
+                                file_object_id,chunk_id,slice_index,byte_offset,length,hash_hex,created_at
+                            ) VALUES (%s,-1,0,0,0,%s,%s)
+                            ON CONFLICT (file_object_id,chunk_id,slice_index) DO NOTHING
+                            """,
+                            (file_object_id, metadata_hash, int(now_ts())),
+                        )
+                    conn.commit()
+            except Exception as exc:
+                _log_event(
+                    "ERROR",
+                    "empty-object audit tag persistence failed",
+                    file_object_id=file_object_id,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
 
         # multipartパートかどうか判定（multipart_parts に session_id があればパート）
         mp_info = None
@@ -942,6 +1207,7 @@ class DataServer:
             self._send_client_json(client_id, {"status": "error", "message": "commit_finalize失敗"})
             return
 
+        self._mark_committed_replicas_healthy(file_object_id, node_ids)
         now = now_ts()
 
         # multipartパートの場合は、ここでは論理itemを作らない（最後に commit_multipart で統合）
@@ -1100,6 +1366,187 @@ class DataServer:
             conn.commit()
 
         self._send_client_json(client_id, {"status": "uploaded", "upload_id": upload_id, "item_id": item_id})
+    def _download_candidate_node_ids(self, file_object_id: str) -> List[str]:
+        """Return ordered, usable replicas without using a reliability score."""
+        with db_conn() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                rows = fetch_download_candidates(
+                    cur,
+                    file_object_id=str(file_object_id),
+                    online_after=int(now_ts()) - NODE_ONLINE_WINDOW_SEC,
+                    limit=max(1, DOWNLOAD_MAX_REPLICA_ATTEMPTS),
+                )
+        return [str(row["node_id"]) for row in rows]
+
+    def _record_download_attempt(
+        self,
+        ctx: TransferCtx,
+        *,
+        success: bool,
+        error_code: Optional[str] = None,
+        replica_status: str = "suspect",
+        verified_failure: bool = False,
+    ) -> None:
+        """Persist one node attempt without allowing metrics failure to stop a download."""
+        state = ctx.failover
+        node_id = str(state.current_node_id or "")
+        if not node_id:
+            return
+        latency_ms = max(0, int((time.monotonic() - state.attempt_started_ts) * 1000.0))
+        try:
+            with db_conn() as conn:
+                with conn.cursor() as cur:
+                    if success:
+                        mark_replica_healthy(
+                            cur,
+                            file_object_id=ctx.file_object_id,
+                            node_id=node_id,
+                            verified=True,
+                        )
+                    else:
+                        mark_replica_failure(
+                            cur,
+                            file_object_id=ctx.file_object_id,
+                            node_id=node_id,
+                            status=replica_status,
+                            error=str(error_code or "download_attempt_failed"),
+                            verified_failure=verified_failure,
+                        )
+                    record_node_transfer_metric(
+                        cur,
+                        node_id=node_id,
+                        file_object_id=ctx.file_object_id,
+                        transfer_id=ctx.transfer_id,
+                        operation="download",
+                        success=bool(success),
+                        bytes_count=state.attempt_bytes,
+                        latency_ms=latency_ms,
+                        error_code=None if success else str(error_code or "download_attempt_failed"),
+                    )
+                conn.commit()
+        except Exception as exc:
+            _log_event(
+                "ERROR",
+                "download attempt health update failed",
+                transfer_id=ctx.transfer_id,
+                file_object_id=ctx.file_object_id,
+                node_id=node_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+    def _remove_active_node_attempt(self, ctx: TransferCtx) -> None:
+        node_transfer_id = ctx.failover.current_node_transfer_id
+        if node_transfer_id:
+            self.node_transfer_index.pop(str(node_transfer_id), None)
+
+    def _finish_download_transfer(self, ctx: TransferCtx) -> None:
+        self._remove_active_node_attempt(ctx)
+        self.transfers.pop(ctx.transfer_id, None)
+
+    def _start_next_download_attempt(
+        self,
+        ctx: TransferCtx,
+        *,
+        previous_error: Optional[str] = None,
+        previous_status: str = "suspect",
+        verified_failure: bool = False,
+    ) -> bool:
+        """Fail the active attempt if needed and start the next replica."""
+        if previous_error and ctx.failover.current_node_id:
+            self._record_download_attempt(
+                ctx,
+                success=False,
+                error_code=previous_error,
+                replica_status=previous_status,
+                verified_failure=verified_failure,
+            )
+            self._remove_active_node_attempt(ctx)
+
+        while True:
+            next_attempt = ctx.failover.begin_next_attempt()
+            if next_attempt is None:
+                self._flush_transfer_meter(ctx)
+                self._send_client_json(
+                    ctx.client_id,
+                    {
+                        "status": "error",
+                        "message": "all replicas failed",
+                        "error_code": "all_replicas_failed",
+                        "transfer_id": ctx.transfer_id,
+                        "attempted_nodes": list(ctx.failover.attempted_node_ids),
+                        "missing": ctx.failover.global_missing(),
+                    },
+                )
+                _log_event(
+                    "ERROR",
+                    "download failed on all replicas",
+                    transfer_id=ctx.transfer_id,
+                    file_object_id=ctx.file_object_id,
+                    attempted_nodes=list(ctx.failover.attempted_node_ids),
+                    received_chunk_count=len(ctx.failover.got),
+                    total_chunks=ctx.total_chunks,
+                )
+                self._finish_download_transfer(ctx)
+                return False
+
+            node_id, node_transfer_id = next_attempt
+            self.node_transfer_index[node_transfer_id] = ctx.transfer_id
+            try:
+                self._send_node_json(
+                    node_id,
+                    {
+                        "op": "stream_object_begin",
+                        "transfer_id": node_transfer_id,
+                        "file_object_id": ctx.file_object_id,
+                    },
+                )
+            except Exception as exc:
+                send_error = f"node_send_failed:{type(exc).__name__}"
+                self._record_download_attempt(
+                    ctx,
+                    success=False,
+                    error_code=send_error,
+                    replica_status="suspect",
+                    verified_failure=False,
+                )
+                self._remove_active_node_attempt(ctx)
+                continue
+
+            if ctx.client_ready_sent and ctx.failover.candidate_index > 0:
+                self._send_client_json(
+                    ctx.client_id,
+                    {
+                        "status": "retrying",
+                        "transfer_id": ctx.transfer_id,
+                        "attempt": len(ctx.failover.attempted_node_ids),
+                        "max_attempts": ctx.failover.max_attempts,
+                    },
+                )
+            _log_event(
+                "INFO",
+                "download replica attempt started",
+                transfer_id=ctx.transfer_id,
+                file_object_id=ctx.file_object_id,
+                node_id=node_id,
+                attempt=len(ctx.failover.attempted_node_ids),
+                max_attempts=ctx.failover.max_attempts,
+            )
+            return True
+
+    def _process_download_timeouts(self) -> None:
+        """Switch replicas when the active node stops producing control or data frames."""
+        for ctx in list(self.transfers.values()):
+            if ctx.aborted_by_cap or not ctx.failover.current_node_id:
+                continue
+            if not ctx.failover.timed_out(DOWNLOAD_NODE_TIMEOUT_SEC):
+                continue
+            self._start_next_download_attempt(
+                ctx,
+                previous_error="node_response_timeout",
+                previous_status="suspect",
+                verified_failure=False,
+            )
+
     def _client_download_begin(self, client_id: bytes, msg: Dict[str, Any]) -> None:
         token = str(msg.get("token", ""))
         now = now_ts()
@@ -1132,37 +1579,36 @@ class DataServer:
                 chunk_size = int(o["chunk_size"])
                 total_chunks = (size_bytes + chunk_size - 1) // chunk_size
 
-                cur.execute("SELECT node_id FROM replicas WHERE file_object_id=%s ORDER BY created_at ASC", (file_object_id,))
-                # row_factory=dict_row のカーソルでは、取得行は辞書形式になる。
-                # r[0] では KeyError: 0 になるため、列名 node_id で取得する。
-                reps = []
-                for r in cur.fetchall():
-                    if isinstance(r, dict):
-                        reps.append(s(r["node_id"]))
-                    else:
-                        reps.append(s(r[0]))
-                if not reps:
-                    self._send_client_json(client_id, {"status": "error", "message": "no replicas"})
-                    return
-                node_id = reps[0]
+        candidates = self._download_candidate_node_ids(file_object_id)
+        if not candidates:
+            self._send_client_json(
+                client_id,
+                {"status": "error", "message": "no usable replicas", "error_code": "no_usable_replicas"},
+            )
+            return
 
         transfer_id = uuid.uuid4().hex
-        self.transfers[transfer_id] = TransferCtx(
+        failover = DownloadFailoverState(
+            transfer_id=transfer_id,
+            candidate_node_ids=candidates,
+            total_chunks=total_chunks,
+            max_attempts=min(len(candidates), max(1, DOWNLOAD_MAX_REPLICA_ATTEMPTS)),
+        )
+        transfer_ctx = TransferCtx(
             transfer_id=transfer_id,
             client_id=client_id,
-            node_id=node_id,
             file_object_id=file_object_id,
             total_chunks=total_chunks,
             charge_user_id=charge_user_id,
             is_shared=is_shared,
+            failover=failover,
         )
+        self.transfers[transfer_id] = transfer_ctx
 
-        self._send_node_json(node_id, {
-            "op": "stream_object_begin",
-            "transfer_id": transfer_id,
-            "file_object_id": file_object_id
-        })
+        if not self._start_next_download_attempt(transfer_ctx):
+            return
         self._send_client_json(client_id, {"status": "ready", "transfer_id": transfer_id, "total_chunks": total_chunks})
+        transfer_ctx.client_ready_sent = True
 
     def _client_download_resend(self, client_id: bytes, msg: Dict[str, Any]) -> None:
         transfer_id = str(msg.get("transfer_id", ""))
@@ -1173,11 +1619,20 @@ class DataServer:
             return
         if not missing:
             return
-        self._send_node_json(ctx.node_id, {
+        node_id = ctx.failover.current_node_id
+        node_transfer_id = ctx.failover.current_node_transfer_id
+        if not node_id or not node_transfer_id:
+            self._send_client_json(client_id, {"status": "error", "message": "no active replica", "transfer_id": transfer_id})
+            return
+        safe_missing = [cid for cid in missing if 0 <= cid < ctx.total_chunks]
+        if not safe_missing:
+            return
+        ctx.failover.touch()
+        self._send_node_json(node_id, {
             "op": "stream_object_resend",
-            "transfer_id": transfer_id,
+            "transfer_id": node_transfer_id,
             "file_object_id": ctx.file_object_id,
-            "missing": missing
+            "missing": safe_missing
         })
 
     def _flush_transfer_meter(self, ctx: TransferCtx) -> None:
@@ -1193,10 +1648,53 @@ class DataServer:
         # [node_id, b"stream", transfer_id, chunk_id, hash, data]
         if len(frames) != 6:
             return
-        _, _, tid_b, cid_b, hash_b, data = frames
-        transfer_id = s(tid_b)
-        ctx = self.transfers.get(transfer_id)
-        if not ctx:
+        if s(frames[2]) in getattr(self, "repair_source_index", {}):
+            self._handle_repair_source_stream(frames)
+            return
+        node_id_b, _, tid_b, cid_b, hash_b, data = frames
+        node_id = s(node_id_b)
+        node_transfer_id = s(tid_b)
+        stable_transfer_id = self.node_transfer_index.get(node_transfer_id)
+        ctx = self.transfers.get(stable_transfer_id or "")
+        if not ctx or not ctx.failover.accepts_frame(node_id=node_id, node_transfer_id=node_transfer_id):
+            # A stale attempt may finish after failover.  Its unique node-side
+            # id prevents those frames from reaching the client.
+            return
+
+        if sha256_hex(data) != s(hash_b):
+            ctx.failover.touch()
+            ctx.failover.attempt_bytes += len(data)
+            self._start_next_download_attempt(
+                ctx,
+                previous_error="ciphertext_hash_mismatch",
+                previous_status="corrupt",
+                verified_failure=True,
+            )
+            return
+
+        try:
+            chunk_id = int(s(cid_b))
+        except Exception:
+            self._start_next_download_attempt(
+                ctx,
+                previous_error="invalid_chunk_id",
+                previous_status="suspect",
+                verified_failure=False,
+            )
+            return
+
+        observation = ctx.failover.observe_chunk(chunk_id, len(data))
+        if observation == "invalid":
+            self._start_next_download_attempt(
+                ctx,
+                previous_error="chunk_id_out_of_range",
+                previous_status="suspect",
+                verified_failure=False,
+            )
+            return
+        if observation == "duplicate":
+            # It still proves that the current replica has this chunk, but it
+            # must not be delivered or metered twice.
             return
 
         # 実測ベース上限：送る直前に「このチャンク分」だけ許可されるか判定
@@ -1210,25 +1708,693 @@ class DataServer:
             ctx.aborted_by_cap = True
             self._send_client_json(ctx.client_id, {
                 "status": "cap_reached",
-                "transfer_id": transfer_id,
+                "transfer_id": ctx.transfer_id,
                 "remaining_bytes": int(remaining),
                 "daily_limit_bytes": int(limit_b) if limit_b is not None else None,
                 "is_shared": ctx.is_shared,
             })
-            self.transfers.pop(transfer_id, None)
+            self._finish_download_transfer(ctx)
             return
 
-        # chunk中継
-        self.client_sock.send_multipart([ctx.client_id, b"stream", tid_b, cid_b, hash_b, data])
+        # The client always sees the stable id, never a node attempt id.
+        self.client_sock.send_multipart([
+            ctx.client_id,
+            b"stream",
+            ctx.transfer_id.encode("utf-8"),
+            cid_b,
+            hash_b,
+            data,
+        ])
 
         ctx.bytes_since_flush += len(data)
-        try:
-            ctx.got.add(int(s(cid_b)))
-        except Exception:
-            pass
 
         if ctx.bytes_since_flush >= CHUNK_METER_FLUSH_BYTES:
             self._flush_transfer_meter(ctx)
+
+    # ---------------- encrypted replica repair ----------------
+    def _discard_repair_context(self, ctx: RepairTransferState) -> None:
+        if ctx.source_transfer_id:
+            self.repair_source_index.pop(str(ctx.source_transfer_id), None)
+        if ctx.target_transfer_id:
+            self.repair_target_index.pop(str(ctx.target_transfer_id), None)
+        self.repairs.pop(ctx.repair_job_id, None)
+
+    def _abort_repair_transport(self, ctx: RepairTransferState) -> None:
+        """Best-effort immediate cleanup; the persistent cleanup queue is authoritative."""
+        try:
+            self._send_node_json(
+                ctx.target_node_id,
+                {
+                    "op": "repair_abort",
+                    "repair_job_id": ctx.repair_job_id,
+                    "file_object_id": ctx.file_object_id,
+                    "transfer_id": ctx.target_transfer_id,
+                },
+            )
+        except Exception:
+            pass
+        if ctx.current_source_node_id and ctx.source_transfer_id:
+            try:
+                self._send_node_json(
+                    ctx.current_source_node_id,
+                    {"op": "stream_object_cancel", "transfer_id": ctx.source_transfer_id},
+                )
+            except Exception:
+                pass
+
+    def _record_repair_metric(
+        self,
+        ctx: RepairTransferState,
+        *,
+        node_id: str,
+        operation: str,
+        success: bool,
+        error_code: Optional[str] = None,
+        bytes_count: Optional[int] = None,
+    ) -> None:
+        try:
+            latency_ms = max(0, int((time.monotonic() - ctx.started_monotonic) * 1000.0))
+            with db_conn() as conn:
+                with conn.cursor() as cur:
+                    record_node_transfer_metric(
+                        cur,
+                        node_id=str(node_id),
+                        file_object_id=ctx.file_object_id,
+                        transfer_id=ctx.repair_job_id,
+                        operation=str(operation),
+                        success=bool(success),
+                        bytes_count=ctx.copied_bytes if bytes_count is None else max(0, int(bytes_count)),
+                        latency_ms=latency_ms,
+                        error_code=None if success else str(error_code or "repair_failed"),
+                    )
+                conn.commit()
+        except Exception as exc:
+            _log_event(
+                "ERROR",
+                "repair metric persistence failed",
+                repair_job_id=ctx.repair_job_id,
+                node_id=node_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+    def _start_repair_target(self, ctx: RepairTransferState) -> bool:
+        self.repair_target_index[ctx.target_transfer_id] = ctx.repair_job_id
+        try:
+            with db_conn() as conn:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    started = mark_repair_target_started(
+                        cur,
+                        repair_job_id=ctx.repair_job_id,
+                        target_node_id=ctx.target_node_id,
+                        transfer_id=ctx.target_transfer_id,
+                    )
+                conn.commit()
+            if not started:
+                self._discard_repair_context(ctx)
+                return False
+            self._send_node_json(
+                ctx.target_node_id,
+                {
+                    "op": "store_object_begin",
+                    "repair_job_id": ctx.repair_job_id,
+                    "transfer_id": ctx.target_transfer_id,
+                    "file_object_id": ctx.file_object_id,
+                    "file_size": ctx.file_size,
+                    "chunk_size": ctx.chunk_size,
+                },
+            )
+            ctx.phase = "awaiting_target_ready"
+            ctx.touch()
+            return True
+        except Exception as exc:
+            self._fail_repair_job(ctx, "target_begin_failed", detail=f"{type(exc).__name__}: {exc}")
+            return False
+
+    def _begin_next_repair_source(self, ctx: RepairTransferState) -> bool:
+        if ctx.source_transfer_id:
+            self.repair_source_index.pop(str(ctx.source_transfer_id), None)
+        attempt = ctx.begin_next_source()
+        if attempt is None:
+            self._fail_repair_job(ctx, "no_healthy_source_available")
+            return False
+        source_node_id, source_transfer_id = attempt
+        self.repair_source_index[source_transfer_id] = ctx.repair_job_id
+        try:
+            with db_conn() as conn:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    started = mark_repair_copying(
+                        cur,
+                        repair_job_id=ctx.repair_job_id,
+                        source_node_id=source_node_id,
+                        target_node_id=ctx.target_node_id,
+                        transfer_id=ctx.target_transfer_id,
+                        total_chunks=ctx.total_chunks,
+                    )
+                conn.commit()
+            if not started:
+                self._abort_repair_transport(ctx)
+                self._discard_repair_context(ctx)
+                return False
+            self._send_node_json(
+                source_node_id,
+                {
+                    "op": "stream_object_begin",
+                    "transfer_id": source_transfer_id,
+                    "file_object_id": ctx.file_object_id,
+                },
+            )
+            return True
+        except Exception as exc:
+            self._restart_repair_from_next_source(
+                ctx,
+                "source_begin_failed",
+                replica_status="suspect",
+                verified_failure=False,
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+            return False
+
+    def _restart_repair_from_next_source(
+        self,
+        ctx: RepairTransferState,
+        error_code: str,
+        *,
+        replica_status: str,
+        verified_failure: bool,
+        detail: Optional[str] = None,
+    ) -> None:
+        source_node_id = str(ctx.current_source_node_id or "")
+        old_target_transfer_id = str(ctx.target_transfer_id)
+        if source_node_id:
+            try:
+                with db_conn() as conn:
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        note_source_failure(
+                            cur,
+                            repair_job_id=ctx.repair_job_id,
+                            file_object_id=ctx.file_object_id,
+                            node_id=source_node_id,
+                            error_code=error_code,
+                            replica_status=replica_status,
+                            verified_failure=verified_failure,
+                        )
+                        queue_repair_cleanup(
+                            cur,
+                            repair_job_id=ctx.repair_job_id,
+                            file_object_id=ctx.file_object_id,
+                            node_id=ctx.target_node_id,
+                            transfer_id=old_target_transfer_id,
+                        )
+                    conn.commit()
+            except Exception as exc:
+                _log_event(
+                    "ERROR",
+                    "repair source failure persistence failed",
+                    repair_job_id=ctx.repair_job_id,
+                    node_id=source_node_id,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+            self._record_repair_metric(
+                ctx,
+                node_id=source_node_id,
+                operation="repair_source",
+                success=False,
+                error_code=error_code,
+            )
+
+        if ctx.source_transfer_id:
+            self.repair_source_index.pop(str(ctx.source_transfer_id), None)
+        self.repair_target_index.pop(old_target_transfer_id, None)
+        self._abort_repair_transport(ctx)
+
+        if (
+            len(ctx.attempted_source_node_ids) >= ctx.max_source_attempts
+            or ctx.source_index >= len(ctx.source_node_ids)
+        ):
+            self._fail_repair_job(ctx, error_code, detail=detail)
+            return
+
+        ctx.reset_target_transfer()
+        self._start_repair_target(ctx)
+
+    def _fail_repair_job(self, ctx: RepairTransferState, error_code: str, *, detail: Optional[str] = None) -> None:
+        try:
+            with db_conn() as conn:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    schedule_repair_retry(
+                        cur,
+                        repair_job_id=ctx.repair_job_id,
+                        error_code=str(error_code),
+                        detail=detail,
+                    )
+                conn.commit()
+        except Exception as exc:
+            _log_event(
+                "ERROR",
+                "repair retry persistence failed",
+                repair_job_id=ctx.repair_job_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            return
+        self._record_repair_metric(
+            ctx,
+            node_id=ctx.target_node_id,
+            operation="repair_target",
+            success=False,
+            error_code=error_code,
+        )
+        self._abort_repair_transport(ctx)
+        self._discard_repair_context(ctx)
+        _log_event(
+            "WARN",
+            "repair attempt ended",
+            repair_job_id=ctx.repair_job_id,
+            file_object_id=ctx.file_object_id,
+            error_code=error_code,
+        )
+
+    def _process_repair_jobs(self) -> None:
+        if not REPLICA_REPAIR_EXECUTION_ENABLED:
+            return
+        now_wall = time.time()
+        if now_wall < self._next_repair_poll_ts:
+            return
+        self._next_repair_poll_ts = now_wall + max(0.25, REPAIR_POLL_INTERVAL_SEC)
+
+        ended_contexts: List[RepairTransferState] = []
+        start_specs: List[Tuple[Dict[str, Any], List[str], str]] = []
+        try:
+            with db_conn() as conn:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    if self.repairs:
+                        statuses = fetch_repair_job_statuses(cur, list(self.repairs))
+                        for job_id, ctx in list(self.repairs.items()):
+                            status = statuses.get(job_id)
+                            if status not in {"selecting_source", "selecting_target", "copying", "verifying"}:
+                                ended_contexts.append(ctx)
+                            else:
+                                renew_repair_lease(
+                                    cur,
+                                    repair_job_id=job_id,
+                                    worker_id=self.repair_worker_id,
+                                    lease_sec=max(REPAIR_LEASE_SEC, int(AUDIT_TIMEOUT_SEC) + 30),
+                                )
+
+                    # Run after renewing this process's leases.  This also
+                    # recovers jobs whose previous DataServer stopped only a
+                    # few seconds before the current process started.
+                    recovered = recover_stale_repair_jobs(cur)
+                    if recovered:
+                        _log_event("WARN", "stale repairs recovered", repair_job_ids=recovered)
+
+                    available = max(0, max(1, REPAIR_MAX_INFLIGHT) - len(self.repairs))
+                    claimed = claim_due_repair_jobs(
+                        cur,
+                        worker_id=self.repair_worker_id,
+                        limit=max(1, available) if available else 1,
+                    ) if available else []
+                    for job in claimed:
+                        job_id = str(job["repair_job_id"])
+                        file_object_id = str(job["file_object_id"])
+                        cur.execute(
+                            "SELECT size_bytes,chunk_size FROM objects WHERE file_object_id=%s",
+                            (file_object_id,),
+                        )
+                        object_row = cur.fetchone()
+                        if not object_row:
+                            schedule_repair_retry(
+                                cur,
+                                repair_job_id=job_id,
+                                error_code="object_metadata_missing",
+                            )
+                            continue
+                        size_bytes = int(object_row["size_bytes"])
+                        sources = select_source_candidates(
+                            cur,
+                            file_object_id=file_object_id,
+                            online_after=int(now_ts()) - NODE_ONLINE_WINDOW_SEC,
+                            audit_after=int(now_ts()) - max(1, REPAIR_SOURCE_AUDIT_VALID_SEC),
+                            limit=max(1, REPAIR_MAX_SOURCE_ATTEMPTS),
+                        )
+                        if not sources:
+                            schedule_repair_retry(
+                                cur,
+                                repair_job_id=job_id,
+                                error_code="no_verified_online_source",
+                            )
+                            continue
+                        target = select_and_reserve_target(
+                            cur,
+                            repair_job_id=job_id,
+                            file_object_id=file_object_id,
+                            file_size=size_bytes,
+                            source_node_ids=sources,
+                            online_after=int(now_ts()) - NODE_ONLINE_WINDOW_SEC,
+                        )
+                        if not target:
+                            schedule_repair_retry(
+                                cur,
+                                repair_job_id=job_id,
+                                error_code="no_capacity_or_failure_domain_target",
+                            )
+                            continue
+                        spec = dict(job)
+                        spec["size_bytes"] = size_bytes
+                        spec["chunk_size"] = int(object_row["chunk_size"])
+                        start_specs.append((spec, sources, target))
+                conn.commit()
+        except Exception as exc:
+            _log_event("ERROR", "repair polling failed", error=f"{type(exc).__name__}: {exc}")
+            return
+
+        for ctx in ended_contexts:
+            self._abort_repair_transport(ctx)
+            self._discard_repair_context(ctx)
+        for job, sources, target in start_specs:
+            ctx = RepairTransferState(
+                repair_job_id=str(job["repair_job_id"]),
+                file_object_id=str(job["file_object_id"]),
+                file_size=int(job["size_bytes"]),
+                chunk_size=int(job["chunk_size"]),
+                target_node_id=str(target),
+                source_node_ids=sources,
+                max_source_attempts=max(1, REPAIR_MAX_SOURCE_ATTEMPTS),
+            )
+            self.repairs[ctx.repair_job_id] = ctx
+            self._start_repair_target(ctx)
+            _log_event(
+                "INFO",
+                "repair transfer started",
+                repair_job_id=ctx.repair_job_id,
+                file_object_id=ctx.file_object_id,
+                target_node_id=ctx.target_node_id,
+                source_candidates=ctx.source_node_ids,
+            )
+
+    def _process_repair_timeouts(self) -> None:
+        for ctx in list(self.repairs.values()):
+            if ctx.phase == "verifying" or not ctx.timed_out(REPAIR_STEP_TIMEOUT_SEC):
+                continue
+            if ctx.phase in {"awaiting_source_ready", "copying", "awaiting_source_end"}:
+                self._restart_repair_from_next_source(
+                    ctx,
+                    "repair_source_timeout",
+                    replica_status="suspect",
+                    verified_failure=False,
+                )
+            else:
+                self._fail_repair_job(ctx, "repair_target_timeout")
+
+    def _process_repair_cleanup_queue(self) -> None:
+        if not REPLICA_REPAIR_EXECUTION_ENABLED or time.time() < self._next_repair_cleanup_ts:
+            return
+        self._next_repair_cleanup_ts = time.time() + 5.0
+        tasks: List[Dict[str, Any]] = []
+        try:
+            with db_conn() as conn:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    tasks = claim_repair_cleanup_tasks(cur, limit=max(1, REPAIR_CLEANUP_BATCH))
+                conn.commit()
+        except Exception as exc:
+            _log_event("ERROR", "repair cleanup polling failed", error=f"{type(exc).__name__}: {exc}")
+            return
+        for task in tasks:
+            try:
+                self._send_node_json(
+                    str(task["node_id"]),
+                    {
+                        "op": "repair_abort",
+                        "repair_job_id": str(task["repair_job_id"]),
+                        "file_object_id": str(task["file_object_id"]),
+                        "transfer_id": str(task["transfer_id"]),
+                    },
+                )
+            except Exception as exc:
+                try:
+                    with db_conn() as conn:
+                        with conn.cursor() as cur:
+                            mark_repair_cleanup_result(
+                                cur,
+                                node_id=str(task["node_id"]),
+                                transfer_id=str(task["transfer_id"]),
+                                success=False,
+                                error=f"{type(exc).__name__}: {exc}",
+                            )
+                        conn.commit()
+                except Exception:
+                    pass
+
+    def _handle_repair_source_stream(self, frames: List[bytes]) -> bool:
+        if len(frames) != 6:
+            return False
+        node_id_b, _, transfer_id_b, chunk_id_b, hash_b, data = frames
+        transfer_id = s(transfer_id_b)
+        job_id = self.repair_source_index.get(transfer_id)
+        ctx = self.repairs.get(job_id or "")
+        node_id = s(node_id_b)
+        if not ctx or not ctx.accepts_source(node_id=node_id, transfer_id=transfer_id):
+            return False
+        if sha256_hex(data) != s(hash_b):
+            self._restart_repair_from_next_source(
+                ctx,
+                "repair_ciphertext_hash_mismatch",
+                replica_status="corrupt",
+                verified_failure=True,
+            )
+            return True
+        try:
+            chunk_id = int(s(chunk_id_b))
+        except Exception:
+            self._restart_repair_from_next_source(
+                ctx,
+                "repair_invalid_chunk_id",
+                replica_status="suspect",
+                verified_failure=False,
+            )
+            return True
+        observation = ctx.observe_source_chunk(chunk_id, len(data))
+        if observation == "invalid":
+            self._restart_repair_from_next_source(
+                ctx,
+                "repair_chunk_out_of_range",
+                replica_status="suspect",
+                verified_failure=False,
+            )
+            return True
+        if observation == "duplicate":
+            return True
+        try:
+            self._send_node_data(
+                ctx.target_node_id,
+                [b"store", ctx.target_transfer_id.encode("utf-8"), chunk_id_b, hash_b, data],
+            )
+        except Exception as exc:
+            self._fail_repair_job(
+                ctx,
+                "repair_target_chunk_send_failed",
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+            return True
+        if ctx.copied_bytes - ctx.persisted_copied_bytes >= max(1, REPAIR_PROGRESS_FLUSH_BYTES):
+            try:
+                with db_conn() as conn:
+                    with conn.cursor() as cur:
+                        update_repair_progress(
+                            cur,
+                            repair_job_id=ctx.repair_job_id,
+                            copied_bytes=ctx.copied_bytes,
+                        )
+                    conn.commit()
+                ctx.persisted_copied_bytes = ctx.copied_bytes
+            except Exception as exc:
+                _log_event(
+                    "ERROR",
+                    "repair progress persistence failed",
+                    repair_job_id=ctx.repair_job_id,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+        return True
+
+    def _handle_repair_node_json(self, node_id_b: bytes, payload: Dict[str, Any]) -> bool:
+        op = str(payload.get("op") or "")
+        node_id = s(node_id_b)
+
+        if op == "repair_abort_reply":
+            transfer_id = str(payload.get("transfer_id") or "")
+            if transfer_id:
+                try:
+                    with db_conn() as conn:
+                        with conn.cursor() as cur:
+                            mark_repair_cleanup_result(
+                                cur,
+                                node_id=node_id,
+                                transfer_id=transfer_id,
+                                success=str(payload.get("status") or "error") == "ok",
+                                error=str(payload.get("message") or "repair_abort_failed"),
+                            )
+                        conn.commit()
+                except Exception as exc:
+                    _log_event(
+                        "ERROR",
+                        "repair cleanup result persistence failed",
+                        node_id=node_id,
+                        transfer_id=transfer_id,
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
+            return True
+
+        if op in {"store_object_ready", "store_ack", "store_object_end_reply"}:
+            transfer_id = str(payload.get("transfer_id") or "")
+            job_id = self.repair_target_index.get(transfer_id)
+            ctx = self.repairs.get(job_id or "")
+            if not ctx or not ctx.accepts_target(node_id=node_id, transfer_id=transfer_id):
+                return bool(job_id)
+
+            ctx.touch()
+            if op == "store_object_ready":
+                if str(payload.get("status") or "error") != "ready":
+                    self._fail_repair_job(ctx, "repair_target_rejected_store")
+                    return True
+                node_total = int(payload.get("total_chunks", ctx.total_chunks) or 0)
+                if node_total != ctx.total_chunks:
+                    self._fail_repair_job(ctx, "repair_target_metadata_mismatch")
+                    return True
+                self._begin_next_repair_source(ctx)
+                return True
+
+            if op == "store_ack":
+                if str(payload.get("status") or "error") != "ack":
+                    self._fail_repair_job(
+                        ctx,
+                        "repair_target_chunk_rejected",
+                        detail=str(payload.get("message") or "target rejected ciphertext chunk"),
+                    )
+                    return True
+                try:
+                    ctx.observe_target_ack(int(payload.get("chunk_id")))
+                except Exception:
+                    pass
+                return True
+
+            if str(payload.get("status") or "error") != "ok":
+                self._fail_repair_job(
+                    ctx,
+                    "repair_target_finalize_failed",
+                    detail=str(payload.get("message") or "target returned error"),
+                )
+                return True
+
+            audit_job: Optional[Dict[str, Any]] = None
+            try:
+                with db_conn() as conn:
+                    with conn.cursor(row_factory=dict_row) as cur:
+                        changed = mark_repair_verifying(
+                            cur,
+                            repair_job_id=ctx.repair_job_id,
+                            copied_bytes=ctx.copied_bytes,
+                            lease_sec=max(REPAIR_LEASE_SEC, int(AUDIT_TIMEOUT_SEC) + 30),
+                        )
+                        if changed:
+                            audit_job = create_repair_verification_audit(
+                                cur,
+                                repair_job_id=ctx.repair_job_id,
+                                file_object_id=ctx.file_object_id,
+                                node_id=ctx.target_node_id,
+                            )
+                        if not changed or audit_job is None:
+                            schedule_repair_retry(
+                                cur,
+                                repair_job_id=ctx.repair_job_id,
+                                error_code="verification_slice_unavailable" if changed else "repair_state_changed",
+                            )
+                    conn.commit()
+            except Exception as exc:
+                self._fail_repair_job(
+                    ctx,
+                    "repair_verification_setup_failed",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
+                return True
+
+            if audit_job is None:
+                self._abort_repair_transport(ctx)
+                self._discard_repair_context(ctx)
+                return True
+            ctx.phase = "verifying"
+            ctx.touch()
+            _log_event(
+                "INFO",
+                "repair copy stored; verification queued",
+                repair_job_id=ctx.repair_job_id,
+                audit_job_id=str(audit_job["audit_job_id"]),
+                target_node_id=ctx.target_node_id,
+            )
+            return True
+
+        if op in {"stream_object_ready", "stream_object_end"}:
+            transfer_id = str(payload.get("transfer_id") or "")
+            job_id = self.repair_source_index.get(transfer_id)
+            ctx = self.repairs.get(job_id or "")
+            if not ctx or not ctx.accepts_source(node_id=node_id, transfer_id=transfer_id):
+                return bool(job_id)
+            ctx.touch()
+            if op == "stream_object_ready":
+                if str(payload.get("status") or "error") != "ready":
+                    self._restart_repair_from_next_source(
+                        ctx,
+                        "repair_source_object_missing",
+                        replica_status="missing",
+                        verified_failure=True,
+                    )
+                    return True
+                node_total = int(payload.get("total_chunks", ctx.total_chunks) or 0)
+                if node_total != ctx.total_chunks:
+                    self._restart_repair_from_next_source(
+                        ctx,
+                        "repair_source_metadata_mismatch",
+                        replica_status="corrupt",
+                        verified_failure=True,
+                    )
+                    return True
+                ctx.phase = "copying"
+                return True
+
+            if str(payload.get("status") or "error") != "ok":
+                self._restart_repair_from_next_source(
+                    ctx,
+                    "repair_source_stream_failed",
+                    replica_status="suspect",
+                    verified_failure=False,
+                )
+                return True
+            if not ctx.source_stream_complete():
+                self._restart_repair_from_next_source(
+                    ctx,
+                    "repair_source_incomplete",
+                    replica_status="missing",
+                    verified_failure=True,
+                )
+                return True
+            ctx.phase = "awaiting_target_commit"
+            try:
+                self._send_node_json(
+                    ctx.target_node_id,
+                    {
+                        "op": "store_object_end",
+                        "repair_job_id": ctx.repair_job_id,
+                        "transfer_id": ctx.target_transfer_id,
+                        "file_object_id": ctx.file_object_id,
+                    },
+                )
+            except Exception as exc:
+                self._fail_repair_job(
+                    ctx,
+                    "repair_target_finalize_send_failed",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
+            return True
+
+        return False
 
     def _process_object_gc_queue(self) -> None:
         """API/ジョブ側が積んだ object_gc_queue を読み、ノードへ delete_object を送る。"""
@@ -1300,11 +2466,28 @@ class DataServer:
                     error=f"{type(exc).__name__}: {exc}",
                 )
                 return
-            self._handle_node_json(nframes[0], payload)
+            try:
+                self._handle_node_json(nframes[0], payload)
+            except Exception as exc:
+                _log_event(
+                    "ERROR",
+                    "node JSON handler failed",
+                    node_id=s(nframes[0]),
+                    op=str(payload.get("op") or ""),
+                    error=f"{type(exc).__name__}: {exc}",
+                )
             return
 
         if kind == b"stream":
-            self._handle_node_stream(nframes)
+            try:
+                self._handle_node_stream(nframes)
+            except Exception as exc:
+                _log_event(
+                    "ERROR",
+                    "node stream handler failed",
+                    node_id=s(nframes[0]),
+                    error=f"{type(exc).__name__}: {exc}",
+                )
             return
 
         _log_event(
@@ -1325,40 +2508,135 @@ class DataServer:
             self._handle_object_gc_delete_reply(node_id_b, payload)
             return
 
-        if op == "audit_reply":
+        if self._handle_repair_node_json(node_id_b, payload):
+            return
+
+        if op in {"audit_result", "audit_reply"}:
             event_id = str(payload.get("event_id", ""))
-            got_hash = str(payload.get("hash_hex", ""))
+            got_hash = str(payload.get("hash", payload.get("hash_hex", "")) or "")
             status_in = str(payload.get("status", "error"))
             ap = self.audit_pending.get(event_id)
             if not ap:
+                return
+            if ap.node_id != s(node_id_b):
+                _log_event(
+                    "WARN",
+                    "audit response node mismatch ignored",
+                    audit_job_id=event_id,
+                    expected_node_id=ap.node_id,
+                    actual_node_id=s(node_id_b),
+                )
                 return
             latency_ms = int((time.time() - ap.sent_ts) * 1000.0)
             if status_in == "ok" and got_hash and got_hash == ap.expected_hash:
                 self._apply_audit_result(event_id, "ok", got_hash, latency_ms)
             elif status_in == "missing":
                 self._apply_audit_result(event_id, "missing", got_hash, latency_ms)
+            elif status_in == "ok" and got_hash:
+                self._apply_audit_result(event_id, "hash_mismatch", got_hash, latency_ms)
             else:
-                self._apply_audit_result(event_id, "fail", got_hash, latency_ms)
+                self._apply_audit_result(
+                    event_id,
+                    "error",
+                    got_hash,
+                    latency_ms,
+                    detail=str(payload.get("message") or "node audit error"),
+                )
+            return
+
+        if op == "stream_object_ready":
+            node_transfer_id = str(payload.get("transfer_id", "") or "")
+            stable_transfer_id = self.node_transfer_index.get(node_transfer_id)
+            ctx = self.transfers.get(stable_transfer_id or "")
+            node_id = s(node_id_b)
+            if not ctx or not ctx.failover.accepts_frame(
+                node_id=node_id,
+                node_transfer_id=node_transfer_id,
+            ):
+                return
+
+            ctx.failover.touch()
+            if str(payload.get("status", "error")) != "ready":
+                self._start_next_download_attempt(
+                    ctx,
+                    previous_error="replica_object_missing",
+                    previous_status="missing",
+                    verified_failure=True,
+                )
+                return
+
+            node_total_chunks = int(payload.get("total_chunks", ctx.total_chunks) or 0)
+            if node_total_chunks != ctx.total_chunks:
+                self._start_next_download_attempt(
+                    ctx,
+                    previous_error="replica_metadata_mismatch",
+                    previous_status="corrupt",
+                    verified_failure=True,
+                )
             return
 
         if op == "stream_object_end":
-            transfer_id = str(payload.get("transfer_id", ""))
-            ctx = self.transfers.get(transfer_id)
-            if not ctx:
+            node_transfer_id = str(payload.get("transfer_id", "") or "")
+            stable_transfer_id = self.node_transfer_index.get(node_transfer_id)
+            ctx = self.transfers.get(stable_transfer_id or "")
+            node_id = s(node_id_b)
+            if not ctx or not ctx.failover.accepts_frame(
+                node_id=node_id,
+                node_transfer_id=node_transfer_id,
+            ):
                 return
 
-            self._flush_transfer_meter(ctx)
+            ctx.failover.touch()
+            if str(payload.get("status", "error")) != "ok":
+                self._start_next_download_attempt(
+                    ctx,
+                    previous_error="replica_stream_error",
+                    previous_status="suspect",
+                    verified_failure=False,
+                )
+                return
 
             if ctx.aborted_by_cap:
-                self.transfers.pop(transfer_id, None)
+                self._finish_download_transfer(ctx)
                 return
 
-            missing = [i for i in range(ctx.total_chunks) if i not in ctx.got]
-            if missing:
-                self._send_client_json(ctx.client_id, {"status": "incomplete", "transfer_id": transfer_id, "missing": missing})
-            else:
-                self._send_client_json(ctx.client_id, {"status": "done", "transfer_id": transfer_id})
-            self.transfers.pop(transfer_id, None)
+            global_missing = ctx.failover.global_missing()
+            current_missing = ctx.failover.current_attempt_missing()
+            if current_missing:
+                if global_missing:
+                    self._start_next_download_attempt(
+                        ctx,
+                        previous_error="replica_incomplete_stream",
+                        previous_status="missing",
+                        verified_failure=True,
+                    )
+                    return
+
+                # The client obtained a complete object by combining validated
+                # chunks from more than one replica.  The current replica is
+                # still marked missing because it did not prove a full copy.
+                self._record_download_attempt(
+                    ctx,
+                    success=False,
+                    error_code="replica_incomplete_stream",
+                    replica_status="missing",
+                    verified_failure=True,
+                )
+                self._flush_transfer_meter(ctx)
+                self._send_client_json(
+                    ctx.client_id,
+                    {"status": "done", "transfer_id": ctx.transfer_id, "failover_count": max(0, len(ctx.failover.attempted_node_ids) - 1)},
+                )
+                self._finish_download_transfer(ctx)
+                return
+
+            self._record_download_attempt(ctx, success=True)
+            self._flush_transfer_meter(ctx)
+            self._send_client_json(
+                ctx.client_id,
+                {"status": "done", "transfer_id": ctx.transfer_id, "failover_count": max(0, len(ctx.failover.attempted_node_ids) - 1)},
+            )
+            self._finish_download_transfer(ctx)
             return
 
     # ---------------- main loop ----------------
@@ -1370,20 +2648,28 @@ class DataServer:
             node_endpoint=self.node_endpoint,
             pyzmq_version=getattr(zmq, "__version__", "unknown"),
             libzmq_version=zmq.zmq_version(),
+            storage_audit_enabled=STORAGE_AUDIT_ENABLED,
+            replica_repair_execution_enabled=REPLICA_REPAIR_EXECUTION_ENABLED,
         )
         while True:
-            # periodic node audits (challenge-response)
+            # Bounded maintenance work; no HTTP request waits for these jobs.
             try:
                 self._schedule_one_audit()
-                # timeout cleanup
-                ttl = float(os.environ.get("AUDIT_TIMEOUT_SEC", "8"))
                 nowt = time.time()
-                expired = [eid for eid, ap in list(self.audit_pending.items()) if (nowt - ap.sent_ts) > ttl]
+                expired = [
+                    eid
+                    for eid, ap in list(self.audit_pending.items())
+                    if (nowt - ap.sent_ts) > max(0.5, AUDIT_TIMEOUT_SEC)
+                ]
                 for eid in expired:
-                    self._apply_audit_result(eid, "timeout", "", int(ttl*1000))
+                    self._apply_audit_result(eid, "timeout", "", int(AUDIT_TIMEOUT_SEC * 1000))
+                self._process_download_timeouts()
+                self._process_repair_jobs()
+                self._process_repair_timeouts()
+                self._process_repair_cleanup_queue()
                 self._process_object_gc_queue()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log_event("ERROR", "maintenance loop iteration failed", error=f"{type(exc).__name__}: {exc}")
 
             socks = dict(self.poller.poll(timeout=100))
 

@@ -59,6 +59,9 @@ from items_phase2_patch import init_phase2_items_schema, router as phase2_items_
 from node_heartbeat_stats_patch import init_node_heartbeat_stats_schema
 from node_provider_v2 import init_phase1_node_provider_schema, router as node_provider_router
 from object_gc import init_object_gc_schema
+from replica_health_service import init_storage_maintenance_schema
+from storage_audit_service import init_storage_audit_schema
+from replica_repair_service import init_replica_repair_schema
 from phase3_ops_patch import router as phase3_ops_router
 from phase4_copy_patch_v2 import router as phase4_copy_router
 from phase5_library_patch import (
@@ -171,6 +174,12 @@ def initialize_patch_schemas() -> None:
 
     # 完全削除後のオブジェクトGCキュー。
     init_object_gc_schema()
+
+    # Phase 1 data-integrity tables.  Schema initialization never starts I/O;
+    # audit/repair execution remains controlled by explicit feature flags.
+    init_storage_maintenance_schema()
+    init_storage_audit_schema()
+    init_replica_repair_schema()
 
     # Home / Shared / Recent / メール指定共有。
     init_phase5_library_schema()

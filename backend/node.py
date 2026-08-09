@@ -141,17 +141,27 @@ class TransferSession:
     file_size: int
     chunk_size: int
     total_chunks: int
+    repair_job_id: str = ""
 
 # ------------------------
 # Node
 # ------------------------
 class Node:
-    def __init__(self, node_id: str, server: str, storage_base: str, capacity_bytes: int, node_api_key: str) -> None:
+    def __init__(
+        self,
+        node_id: str,
+        server: str,
+        storage_base: str,
+        capacity_bytes: int,
+        node_api_key: str,
+        failure_domain: str = "",
+    ) -> None:
         self.node_id = node_id
         self.server = server
         self.base = storage_base
         self.capacity_bytes = capacity_bytes
         self.node_api_key = node_api_key
+        self.failure_domain = str(failure_domain or "").strip()
 
         os.makedirs(os.path.join(self.base, "objects"), exist_ok=True)
         os.makedirs(os.path.join(self.base, "tmp", "sessions"), exist_ok=True)
@@ -223,6 +233,7 @@ class Node:
                 "op": "heartbeat",
                 "capacity_bytes": int(self.capacity_bytes),
                 "node_api_key": self.node_api_key,
+                "failure_domain": self.failure_domain,
                 "meta_json": "{}",
             })])
             if not self._heartbeat_ever_succeeded:
@@ -302,11 +313,46 @@ class Node:
         with open(mp, "rb") as f:
             return jload(f.read())
 
+    def _audit_ciphertext_slice(
+        self,
+        file_object_id: str,
+        chunk_id: int,
+        offset: int,
+        length: int,
+    ) -> tuple[str, str, str]:
+        """Return (status, hash, message) without decrypting stored bytes."""
+        if chunk_id == -1 and offset == 0 and length == 0:
+            try:
+                meta = self._load_meta(file_object_id)
+            except Exception as exc:
+                return "error", "", f"metadata read failed: {type(exc).__name__}"
+            if not meta:
+                return "missing", "", "object metadata missing"
+            canonical = (
+                f"meta:{int(meta.get('file_size', -1))}:"
+                f"{int(meta.get('chunk_size', -1))}:"
+                f"{int(meta.get('total_chunks', -1))}"
+            ).encode("utf-8")
+            return "ok", sha256_hex(canonical), ""
+
+        path = chunk_path(self.base, file_object_id, chunk_id)
+        if offset < 0 or length <= 0 or not os.path.exists(path):
+            return "missing", "", "ciphertext chunk missing"
+        try:
+            with open(path, "rb") as handle:
+                handle.seek(offset)
+                segment = handle.read(length)
+        except OSError as exc:
+            return "error", "", f"audit read failed: {type(exc).__name__}"
+        if len(segment) != length:
+            return "missing", "", "ciphertext slice truncated"
+        return "ok", sha256_hex(segment), ""
+
     # ------------------------
     # Store (repair/copy receive)
     # ------------------------
     def _transfer_write_chunk(self, transfer_id: str, cid: int, data: bytes) -> None:
-        d = transfer_tmp_dir(self.base, transfer_id)
+        d = os.path.join(transfer_tmp_dir(self.base, transfer_id), "chunks")
         os.makedirs(d, exist_ok=True)
         p = os.path.join(d, f"{cid}.bin")
         with open(p, "wb") as f:
@@ -314,25 +360,51 @@ class Node:
 
     def _transfer_finalize(self, t: TransferSession) -> None:
         total = t.total_chunks
-        dst_chunks_dir = os.path.join(obj_dir(self.base, t.file_object_id), "chunks")
-        os.makedirs(dst_chunks_dir, exist_ok=True)
-
         src_dir = transfer_tmp_dir(self.base, t.transfer_id)
+        src_chunks_dir = os.path.join(src_dir, "chunks")
+
+        # Validate completeness before touching the published object path.
         for i in range(total):
-            src = os.path.join(src_dir, f"{i}.bin")
-            dst = os.path.join(dst_chunks_dir, f"{i}.bin")
+            src = os.path.join(src_chunks_dir, f"{i}.bin")
             if not os.path.exists(src):
                 raise RuntimeError(f"missing stored chunk: {i}")
-            shutil.move(src, dst)
 
-        with open(meta_path(self.base, t.file_object_id), "wb") as f:
+        with open(os.path.join(src_dir, "meta.json"), "wb") as f:
             f.write(jdump({
                 "file_size": t.file_size,
                 "chunk_size": t.chunk_size,
                 "total_chunks": t.total_chunks,
                 "created_at": now_ts(),
+                "repair_job_id": t.repair_job_id,
+                "repair_transfer_id": t.transfer_id,
             }))
-        shutil.rmtree(src_dir, ignore_errors=True)
+
+        destination = obj_dir(self.base, t.file_object_id)
+        if os.path.isdir(destination):
+            previous_meta = self._load_meta(t.file_object_id)
+            if not previous_meta or not previous_meta.get("repair_transfer_id"):
+                raise RuntimeError("refusing to overwrite a non-repair object")
+            # This is an unpublished orphan from an older failed repair, not a
+            # DB replica.  Removing it cannot reduce the effective copy count.
+            shutil.rmtree(destination)
+        # storage tmp and objects live below the same configured base, so the
+        # final rename publishes the complete directory atomically.
+        os.replace(src_dir, destination)
+
+    def _abort_repair_transfer(self, transfer_id: str, file_object_id: str) -> bool:
+        """Delete only bytes that still belong to the named repair attempt."""
+        removed = False
+        self.transfers.pop(str(transfer_id), None)
+        tmp_dir = transfer_tmp_dir(self.base, str(transfer_id))
+        if os.path.isdir(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            removed = True
+
+        meta = self._load_meta(str(file_object_id))
+        if meta and str(meta.get("repair_transfer_id") or "") == str(transfer_id):
+            self._delete_object(str(file_object_id))
+            removed = True
+        return removed
 
     # ------------------------
     # Stream send (download)
@@ -527,6 +599,55 @@ class Node:
                         "status":"ok",
                     })])
 
+                elif op == "stream_object_cancel":
+                    # Streaming is synchronous in this node process.  A late
+                    # cancel is still acknowledged; DataServer rejects frames
+                    # from the old unique transfer id.
+                    self.sock.send_multipart([b"json", jdump({
+                        "op": "stream_object_cancel_reply",
+                        "transfer_id": str(msg.get("transfer_id") or ""),
+                        "status": "ok",
+                    })])
+
+                # ---- ciphertext slice audit ----
+                elif op == "audit_slice":
+                    started = time.monotonic()
+                    event_id = str(msg.get("event_id") or "")
+                    file_object_id = str(msg.get("file_object_id") or "")
+                    try:
+                        chunk_id = int(msg.get("chunk_id"))
+                        offset = int(msg.get("offset"))
+                        length = int(msg.get("length"))
+                    except Exception:
+                        self.sock.send_multipart([b"json", jdump({
+                            "op": "audit_result",
+                            "event_id": event_id,
+                            "file_object_id": file_object_id,
+                            "status": "error",
+                            "message": "invalid audit range",
+                            "hash": "",
+                            "latency_ms": int((time.monotonic() - started) * 1000),
+                        })])
+                        continue
+
+                    status, got_hash, message = self._audit_ciphertext_slice(
+                        file_object_id,
+                        chunk_id,
+                        offset,
+                        length,
+                    )
+
+                    self.sock.send_multipart([b"json", jdump({
+                        "op": "audit_result",
+                        "event_id": event_id,
+                        "file_object_id": file_object_id,
+                        "chunk_id": chunk_id,
+                        "status": status,
+                        "hash": got_hash,
+                        "message": message,
+                        "latency_ms": int((time.monotonic() - started) * 1000),
+                    })])
+
                 # ---- store begin/end (repair/copy receiver) ----
                 elif op == "store_object_begin":
                     transfer_id = str(msg["transfer_id"])
@@ -535,12 +656,30 @@ class Node:
                     chunk_size = int(msg["chunk_size"])
                     total = ceil_div(file_size, chunk_size)
 
+                    existing_transfer = self.transfers.get(transfer_id)
+                    if existing_transfer:
+                        same_request = (
+                            existing_transfer.file_object_id == file_object_id
+                            and existing_transfer.file_size == file_size
+                            and existing_transfer.chunk_size == chunk_size
+                        )
+                        self.sock.send_multipart([b"json", jdump({
+                            "op":"store_object_ready",
+                            "transfer_id": transfer_id,
+                            "status":"ready" if same_request else "error",
+                            "total_chunks": existing_transfer.total_chunks,
+                        })])
+                        continue
+
+                    shutil.rmtree(transfer_tmp_dir(self.base, transfer_id), ignore_errors=True)
+
                     self.transfers[transfer_id] = TransferSession(
                         transfer_id=transfer_id,
                         file_object_id=file_object_id,
                         file_size=file_size,
                         chunk_size=chunk_size,
                         total_chunks=total,
+                        repair_job_id=str(msg.get("repair_job_id") or ""),
                     )
                     os.makedirs(transfer_tmp_dir(self.base, transfer_id), exist_ok=True)
                     self.sock.send_multipart([b"json", jdump({
@@ -554,10 +693,16 @@ class Node:
                     transfer_id = str(msg["transfer_id"])
                     t = self.transfers.get(transfer_id)
                     if not t:
+                        file_object_id = str(msg.get("file_object_id") or "")
+                        try:
+                            meta = self._load_meta(file_object_id) if file_object_id else None
+                        except Exception:
+                            meta = None
+                        already_finalized = bool(meta and str(meta.get("repair_transfer_id") or "") == transfer_id)
                         self.sock.send_multipart([b"json", jdump({
                             "op":"store_object_end_reply",
                             "transfer_id": transfer_id,
-                            "status":"error",
+                            "status":"ok" if already_finalized else "error",
                         })])
                         continue
                     try:
@@ -577,6 +722,29 @@ class Node:
                     finally:
                         self.transfers.pop(transfer_id, None)
                         shutil.rmtree(transfer_tmp_dir(self.base, transfer_id), ignore_errors=True)
+
+                elif op == "repair_abort":
+                    transfer_id = str(msg.get("transfer_id") or "")
+                    file_object_id = str(msg.get("file_object_id") or "")
+                    try:
+                        removed = self._abort_repair_transfer(transfer_id, file_object_id)
+                        self.sock.send_multipart([b"json", jdump({
+                            "op": "repair_abort_reply",
+                            "repair_job_id": str(msg.get("repair_job_id") or ""),
+                            "file_object_id": file_object_id,
+                            "transfer_id": transfer_id,
+                            "status": "ok",
+                            "removed": removed,
+                        })])
+                    except Exception as exc:
+                        self.sock.send_multipart([b"json", jdump({
+                            "op": "repair_abort_reply",
+                            "repair_job_id": str(msg.get("repair_job_id") or ""),
+                            "file_object_id": file_object_id,
+                            "transfer_id": transfer_id,
+                            "status": "error",
+                            "message": f"{type(exc).__name__}: {exc}",
+                        })])
 
                 else:
                     # 未知opは無視
@@ -626,7 +794,23 @@ class Node:
                 if not t:
                     # ignore
                     continue
-                if sha256_hex(data) != h:
+                if cid < 0 or cid >= t.total_chunks:
+                    self.sock.send_multipart([b"json", jdump({
+                        "op":"store_ack", "transfer_id": transfer_id,
+                        "chunk_id": cid, "status":"error", "message":"chunk id out of range",
+                    })])
+                    continue
+                # ``file_size`` and ``chunk_size`` describe the logical object.
+                # Stored chunks are encrypted ciphertext and can include framing/authentication
+                # overhead, so their physical byte length must not be compared with the
+                # logical plaintext length here.  Integrity is verified against the SHA-256
+                # supplied by the source and independently checked by DataServer.
+                actual_hash = sha256_hex(data)
+                if actual_hash != h:
+                    self.sock.send_multipart([b"json", jdump({
+                        "op":"store_ack", "transfer_id": transfer_id,
+                        "chunk_id": cid, "status":"error", "message":"ciphertext chunk hash validation failed",
+                    })])
                     continue
                 self._transfer_write_chunk(transfer_id, cid, data)
                 # ACKは必須ではないが、デバッグ用に返せる
@@ -682,6 +866,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--node-id", required=True)
     ap.add_argument("--node-api-key", default=os.environ.get("TRICLOUD_NODE_API_KEY", ""))
+    ap.add_argument(
+        "--failure-domain",
+        default=os.environ.get("TRICLOUD_NODE_FAILURE_DOMAIN", ""),
+        help="optional independent failure-domain label (for example region/rack/provider)",
+    )
     ap.add_argument("--server", default="tcp://127.0.0.1:9999")
     ap.add_argument("--storage-dir", default="./node_store")
     ap.add_argument("--capacity-gb", type=int, default=None)
@@ -738,6 +927,7 @@ def main() -> None:
         storage_base=base,
         capacity_bytes=cap,
         node_api_key=args.node_api_key,
+        failure_domain=args.failure_domain,
     )
     n.serve_forever()
 
