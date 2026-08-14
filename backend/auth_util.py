@@ -32,13 +32,16 @@ except Exception:  # pragma: no cover
 
 _PBKDF2_ITER = 210_000  # adjust per environment
 TRICLOUD_ENV = os.environ.get("TRICLOUD_ENV", "development").strip().lower()
-JWT_SECRET = os.environ.get("JWT_SECRET", "dev-only-change-me")
+_configured_jwt_secret = os.environ.get("JWT_SECRET", "").strip()
 
-if not JWT_SECRET:
-    if TRICLOUD_ENV == "production":
-        raise RuntimeError("JWT_SECRET is required in production")
+if TRICLOUD_ENV == "production" and (
+    not _configured_jwt_secret or _configured_jwt_secret == "dev-only-change-me"
+):
+    raise RuntimeError("JWT_SECRET must be set to a non-default value in production")
+if TRICLOUD_ENV == "production" and len(_configured_jwt_secret) < 32:
+    raise RuntimeError("JWT_SECRET must be at least 32 characters in production")
 
-    JWT_SECRET = "dev-only-change-me"
+JWT_SECRET = _configured_jwt_secret or "dev-only-change-me"
 
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")

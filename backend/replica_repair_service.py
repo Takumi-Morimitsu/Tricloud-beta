@@ -16,6 +16,11 @@ from typing import Any, Dict, List, Optional, Sequence
 from meta_db_pg import db_conn, now_ts
 from object_gc import init_object_gc_schema
 from replica_health_service import mark_replica_failure, mark_replica_healthy
+from repair_object_lock import (
+    lock_repair_object,
+    repair_block_reason,
+    repair_replica_counts,
+)
 from repair_transfer import retry_delay_seconds
 
 
@@ -159,8 +164,25 @@ def enqueue_repair_job(
     reason: str,
     ts: Optional[int] = None,
 ) -> Optional[str]:
-    """Create at most one active repair for an object."""
+    """Create at most one active repair for an object that is still short."""
     timestamp = int(now_ts() if ts is None else ts)
+    object_id = str(file_object_id)
+    if not lock_repair_object(cur, file_object_id=object_id):
+        return None
+    counts = repair_replica_counts(cur, file_object_id=object_id)
+    if repair_block_reason(counts, target_replicas=TARGET_REPLICA_COUNT):
+        return None
+    cur.execute(
+        """
+        SELECT repair_job_id FROM repair_jobs
+        WHERE file_object_id=%s
+          AND status IN ('queued','selecting_source','selecting_target','copying','verifying','retry_wait')
+        LIMIT 1
+        """,
+        (object_id,),
+    )
+    if cur.fetchone():
+        return None
     repair_job_id = str(uuid.uuid4())
     cur.execute(
         """
@@ -176,7 +198,7 @@ def enqueue_repair_job(
         """,
         (
             repair_job_id,
-            str(file_object_id),
+            object_id,
             str(reason or "under_replicated")[:200],
             str(uuid.uuid4()),
             timestamp,
@@ -236,6 +258,40 @@ def claim_due_repair_jobs(
         )
         updated = _row_dict(cur.fetchone())
         if updated:
+            counts = repair_replica_counts(
+                cur,
+                file_object_id=str(updated["file_object_id"]),
+            )
+            block_reason = repair_block_reason(counts, target_replicas=TARGET_REPLICA_COUNT)
+            if block_reason:
+                cur.execute(
+                    """
+                    UPDATE repair_jobs
+                    SET status='canceled',last_error=%s,
+                        failure_code=%s,worker_id=NULL,
+                        lease_expires_at=NULL,canceled_at=%s,finished_at=%s,updated_at=%s
+                    WHERE repair_job_id=%s AND status='selecting_source'
+                    """,
+                    (
+                        "target replica count already satisfied"
+                        if block_reason == "target_already_satisfied"
+                        else "no known-bad replica can be retired safely",
+                        block_reason,
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                        str(updated["repair_job_id"]),
+                    ),
+                )
+                _event(
+                    cur,
+                    repair_job_id=str(updated["repair_job_id"]),
+                    status="canceled",
+                    event=block_reason,
+                    detail="claim skipped before transfer",
+                    ts=timestamp,
+                )
+                continue
             _event(
                 cur,
                 repair_job_id=str(updated["repair_job_id"]),
@@ -267,6 +323,7 @@ def select_source_candidates(
           AND h.status='healthy'
           AND COALESCE(h.last_verified_at,0) >= %s
           AND n.last_seen >= %s
+          AND COALESCE(n.placement_paused,FALSE)=FALSE
         ORDER BY h.last_verified_at DESC,n.last_seen DESC,r.node_id
         LIMIT %s
         """,
@@ -298,6 +355,7 @@ def select_and_reserve_target(
         JOIN objects o ON o.file_object_id=%s
         LEFT JOIN users object_owner ON object_owner.user_id=o.owner_user_id
         WHERE n.last_seen >= %s
+          AND COALESCE(n.placement_paused,FALSE)=FALSE
           AND n.capacity_bytes-n.reserved_bytes >= %s
           AND NOT (n.node_id = ANY(%s::text[]))
           AND NOT EXISTS (
@@ -830,6 +888,16 @@ def complete_repair_job(
 ) -> Dict[str, Any]:
     """Publish a verified target and only then retire known-bad excess rows."""
     timestamp = int(now_ts() if ts is None else ts)
+    # Discover the object without taking the job row lock, then use the common
+    # object -> repair_job lock order shared by admission paths.  Re-read the
+    # job after both locks are held because its state may have changed.
+    cur.execute("SELECT file_object_id FROM repair_jobs WHERE repair_job_id=%s", (str(repair_job_id),))
+    job_ref = _row_dict(cur.fetchone())
+    if not job_ref:
+        return {"applied": False, "reason": "not_found"}
+    file_object_id = str(job_ref["file_object_id"])
+    if not lock_repair_object(cur, file_object_id=file_object_id):
+        return {"applied": False, "reason": "object_missing"}
     cur.execute("SELECT * FROM repair_jobs WHERE repair_job_id=%s FOR UPDATE", (str(repair_job_id),))
     job = _row_dict(cur.fetchone())
     if not job:
@@ -839,12 +907,87 @@ def complete_repair_job(
     if str(job.get("status")) != "verifying" or str(job.get("target_node_id") or "") != str(target_node_id):
         return {"applied": False, "reason": "invalid_state", **job}
 
-    file_object_id = str(job["file_object_id"])
     cur.execute("SELECT size_bytes,created_at FROM objects WHERE file_object_id=%s", (file_object_id,))
     object_row = _row_dict(cur.fetchone())
     if not object_row:
         return {"applied": False, "reason": "object_missing"}
     size_bytes = int(object_row.get("size_bytes") or 0)
+
+    target_count = max(1, int(target_replicas))
+    counts = repair_replica_counts(
+        cur,
+        file_object_id=file_object_id,
+        target_node_id=str(target_node_id),
+    )
+    block_reason = repair_block_reason(
+        counts,
+        target_replicas=target_count,
+        publishing_new_target=int(counts.get("target_published_count") or 0) == 0,
+    )
+    if block_reason:
+        target_is_published = int(counts.get("target_published_count") or 0) > 0
+        if not target_is_published:
+            _release_job_reservation(cur, job)
+            _queue_cleanup(
+                cur,
+                repair_job_id=str(repair_job_id),
+                file_object_id=file_object_id,
+                node_id=str(job.get("target_node_id") or ""),
+                transfer_id=str(job.get("transfer_id") or ""),
+                ts=timestamp,
+            )
+        cur.execute(
+            """
+            UPDATE replica_health h
+            SET status='deleted',last_failure_at=%s,
+                last_error='repair target no longer required',updated_at=%s
+            WHERE h.file_object_id=%s AND h.node_id=%s
+              AND NOT EXISTS (
+                  SELECT 1 FROM replicas r
+                  WHERE r.file_object_id=h.file_object_id AND r.node_id=h.node_id
+              )
+            """,
+            (timestamp, timestamp, file_object_id, str(target_node_id)),
+        )
+        cur.execute(
+            """
+            UPDATE repair_jobs
+            SET status='canceled',last_error=%s,
+                failure_code=%s,worker_id=NULL,
+                lease_expires_at=NULL,reserved_bytes=0,canceled_at=%s,
+                finished_at=%s,updated_at=%s
+            WHERE repair_job_id=%s
+            """,
+            (
+                "target replica count already satisfied"
+                if block_reason == "target_already_satisfied"
+                else "no known-bad replica can be retired safely",
+                block_reason,
+                timestamp,
+                timestamp,
+                timestamp,
+                str(repair_job_id),
+            ),
+        )
+        _event(
+            cur,
+            repair_job_id=str(repair_job_id),
+            status="canceled",
+            event=block_reason,
+            source_node_id=job.get("source_node_id"),
+            target_node_id=str(target_node_id),
+            detail="verified target discarded before publication",
+            ts=timestamp,
+        )
+        return {
+            "applied": True,
+            "status": "canceled",
+            "reason": block_reason,
+            "published": False,
+            "file_object_id": file_object_id,
+            "target_node_id": str(target_node_id),
+            "retired_node_ids": [],
+        }
 
     cur.execute(
         """
@@ -876,7 +1019,7 @@ def complete_repair_job(
         file_object_id=file_object_id,
         keep_node_id=str(target_node_id),
         size_bytes=size_bytes,
-        target_replicas=max(1, int(target_replicas)),
+        target_replicas=target_count,
         ts=timestamp,
     )
     cur.execute(

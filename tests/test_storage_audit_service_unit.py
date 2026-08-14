@@ -60,6 +60,8 @@ class AuditCursor:
         self.executed.append((text, params))
         if text.startswith("SELECT * FROM audit_jobs"):
             self._one = dict(self.job)
+        elif text.startswith("SELECT file_object_id FROM objects"):
+            self._one = {"file_object_id": self.job["file_object_id"]}
         elif text.startswith("SELECT consecutive_failures"):
             self._one = {"consecutive_failures": self.prior_failures}
         else:

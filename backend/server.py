@@ -39,6 +39,7 @@ from node_heartbeat_stats_patch import (
 )
 from object_gc import (
     fetch_pending_object_gc_tasks,
+    gc_unreferenced_objects,
     init_object_gc_schema,
     mark_object_gc_task_done_by_reply,
     mark_object_gc_task_failed,
@@ -54,6 +55,7 @@ from replica_health_service import (
     mark_replicas_healthy,
     record_node_transfer_metric,
 )
+from repair_object_lock import lock_repair_object
 from storage_audit_service import (
     AUDIT_MAX_ATTEMPTS,
     AUDIT_TIMEOUT_SEC,
@@ -116,6 +118,12 @@ DOWNLOAD_MAX_REPLICA_ATTEMPTS = int(os.environ.get("DOWNLOAD_MAX_REPLICA_ATTEMPT
 # Periodic ciphertext audits.  The implementation is complete but remains
 # opt-in so a schema migration never starts production I/O by itself.
 STORAGE_AUDIT_ENABLED = os.environ.get("STORAGE_AUDIT_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+REPLICA_REPAIR_QUEUE_ENABLED = os.environ.get("REPLICA_REPAIR_QUEUE_ENABLED", "0").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 AUDIT_SCHEDULE_INTERVAL_SEC = float(os.environ.get("AUDIT_SCHEDULE_INTERVAL_SEC", "5"))
 AUDIT_TARGET_AGE_SEC = int(os.environ.get("AUDIT_TARGET_AGE_SEC", str(72 * 3600)))
 AUDIT_MAX_INFLIGHT = int(os.environ.get("AUDIT_MAX_INFLIGHT", "16"))
@@ -323,13 +331,18 @@ class DataServer:
                         FROM nodes n
                         JOIN node_profiles np ON np.node_id = n.node_id
                         JOIN users u ON u.user_id = np.owner_user_id
-                        WHERE n.last_seen >= %s AND u.country_code=%s
+                        WHERE n.last_seen >= %s
+                          AND COALESCE(n.placement_paused,FALSE)=FALSE
+                          AND u.country_code=%s
                         """,
                         (now_ts() - NODE_ONLINE_WINDOW_SEC, country_code),
                     )
                 else:
                     cur.execute(
-                        "SELECT node_id, capacity_bytes, reserved_bytes FROM nodes WHERE last_seen >= %s",
+                        """SELECT node_id, capacity_bytes, reserved_bytes
+                           FROM nodes
+                           WHERE last_seen >= %s
+                             AND COALESCE(placement_paused,FALSE)=FALSE""",
                         (now_ts() - NODE_ONLINE_WINDOW_SEC,)
                     )
                 rows = cur.fetchall()
@@ -372,6 +385,8 @@ class DataServer:
         try:
             with db_conn() as conn:
                 with conn.cursor() as cur:
+                    if not lock_repair_object(cur, file_object_id=str(file_object_id)):
+                        return
                     mark_replicas_healthy(
                         cur,
                         file_object_id=str(file_object_id),
@@ -505,7 +520,7 @@ class DataServer:
                         got_hash=str(got_hash or ""),
                         latency_ms=max(0, int(latency_ms or 0)),
                     )
-                    if result.get("repair_needed"):
+                    if result.get("repair_needed") and REPLICA_REPAIR_QUEUE_ENABLED:
                         enqueue_repair_job(
                             cur,
                             file_object_id=str(result["file_object_id"]),
@@ -520,7 +535,12 @@ class DataServer:
                                 repair_job_id=repair_job_id,
                                 target_node_id=str(result["node_id"]),
                             )
-                            if completed.get("applied") or completed.get("reason") == "already_completed":
+                            if completed.get("status") == "canceled" and completed.get("reason") in {
+                                "target_already_satisfied",
+                                "no_safe_retirement_candidate",
+                            }:
+                                repair_action = "superseded"
+                            elif completed.get("applied") or completed.get("reason") == "already_completed":
                                 repair_action = "completed"
                             else:
                                 schedule_repair_retry(
@@ -549,7 +569,7 @@ class DataServer:
             )
             return
 
-        if repair_job_id and repair_action in {"completed", "retry"}:
+        if repair_job_id and repair_action in {"completed", "retry", "superseded"}:
             ctx = self.repairs.get(repair_job_id)
             if ctx and repair_action == "completed":
                 if ctx.current_source_node_id:
@@ -566,6 +586,8 @@ class DataServer:
                     success=True,
                 )
             if ctx and repair_action == "retry":
+                self._abort_repair_transport(ctx)
+            if ctx and repair_action == "superseded":
                 self._abort_repair_transport(ctx)
             if ctx:
                 self._discard_repair_context(ctx)
@@ -1266,14 +1288,10 @@ class DataServer:
                     item_id = str(shared_replace_item_id)
                     resp_status = "replaced"
 
-                    # 旧オブジェクトの寿命終了 + replica削除（簡易）
+                    # The shared GC path locks and re-checks the old object,
+                    # then queues deletion for its actual replica nodes.
                     if old_oid:
-                        cur.execute("UPDATE object_lifetimes SET end_ts=%s WHERE file_object_id=%s AND end_ts IS NULL", (now, old_oid))
-                        cur.execute("DELETE FROM replicas WHERE file_object_id=%s", (old_oid,))
-                        cur.execute("DELETE FROM objects WHERE file_object_id=%s", (old_oid,))
-                        # ノード側実体削除は非同期ジョブ推奨だが、ここでは同期発行だけ
-                        for nid in node_ids:
-                            self._send_node_json(nid, {"op": "delete_object", "file_object_id": old_oid})
+                        gc_unreferenced_objects(cur, [old_oid], reason="share_replace")
                 else:
                     cur.execute(
                         """
@@ -1396,6 +1414,8 @@ class DataServer:
         try:
             with db_conn() as conn:
                 with conn.cursor() as cur:
+                    if not lock_repair_object(cur, file_object_id=str(ctx.file_object_id)):
+                        return
                     if success:
                         mark_replica_healthy(
                             cur,
@@ -2649,6 +2669,7 @@ class DataServer:
             pyzmq_version=getattr(zmq, "__version__", "unknown"),
             libzmq_version=zmq.zmq_version(),
             storage_audit_enabled=STORAGE_AUDIT_ENABLED,
+            replica_repair_queue_enabled=REPLICA_REPAIR_QUEUE_ENABLED,
             replica_repair_execution_enabled=REPLICA_REPAIR_EXECUTION_ENABLED,
         )
         while True:
