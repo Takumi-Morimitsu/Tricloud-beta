@@ -25,6 +25,7 @@ import re
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from psycopg.rows import dict_row
 
@@ -71,6 +72,10 @@ from phase5_library_patch import (
 from ui_upload_bridge_v2 import router as ui_upload_router
 from ui_download_bridge_v2 import router as ui_download_router
 from backup_targets_patch import init_backup_targets_schema, router as backup_targets_router
+from admin_controls import (
+    AdminControlsUnavailable,
+    restriction_for_request,
+)
 
 try:
     import stripe
@@ -202,6 +207,35 @@ app = FastAPI(title=APP_TITLE, lifespan=lifespan, docs_url=None if IS_PRODUCTION
     redoc_url=None if IS_PRODUCTION else "/redoc",
     openapi_url=None if IS_PRODUCTION else "/openapi.json",)
 
+@app.middleware("http")
+async def enforce_phase2_user_controls(request: Request, call_next):
+    """Apply DB-backed account/share/download restrictions to bearer requests."""
+    authorization = str(request.headers.get("authorization") or "")
+    if authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        try:
+            user_id = jwt_decode(token, JWT_SECRET).sub
+        except Exception:
+            # Existing route dependencies return the authoritative auth error.
+            user_id = ""
+        if user_id:
+            try:
+                restriction = restriction_for_request(user_id, request.url.path)
+            except AdminControlsUnavailable:
+                return JSONResponse(
+                    status_code=503,
+                    content={"detail": "account controls are temporarily unavailable"},
+                )
+            if restriction:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": restriction},
+                )
+    return await call_next(request)
+
+
+# Keep CORS outermost so middleware-generated 403/503 responses also receive
+# the appropriate browser headers for explicitly allowed application origins.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -598,6 +632,16 @@ def login(inp: LoginIn) -> Dict[str, Any]:
                 raise HTTPException(status_code=401, detail="invalid credentials")
             uid = str(row["user_id"])
 
+    try:
+        login_restriction = restriction_for_request(uid, "/auth/login")
+    except AdminControlsUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="account controls are temporarily unavailable",
+        ) from exc
+    if login_restriction:
+        raise HTTPException(status_code=403, detail=login_restriction)
+
     access_token = jwt_encode({"sub": uid}, JWT_SECRET, exp_seconds=7 * 24 * 3600)
     return {"user_id": uid, "access_token": access_token}
 
@@ -889,6 +933,18 @@ def share_download_token(share_id: str) -> DownloadTokenOut:
                 raise HTTPException(status_code=410, detail="share expired")
 
             owner = str(row["owner_user_id"])
+            try:
+                public_share_restriction = restriction_for_request(
+                    owner,
+                    "/s/shared/download_token",
+                )
+            except AdminControlsUnavailable as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="account controls are temporarily unavailable",
+                ) from exc
+            if public_share_restriction:
+                raise HTTPException(status_code=403, detail=public_share_restriction)
             _cap_exceeded_or_raise(owner, is_shared=True)
 
             cur.execute(
@@ -1206,7 +1262,8 @@ def payout_node_earning(
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 """
-                SELECT owner_user_id, stripe_connected_account_id
+                SELECT owner_user_id, stripe_connected_account_id,
+                       payout_enabled,COALESCE(payouts_paused,FALSE) AS payouts_paused
                 FROM node_profiles
                 WHERE node_id=%s
                 """,
@@ -1217,6 +1274,10 @@ def payout_node_earning(
                 raise HTTPException(status_code=404, detail="node profile not found")
             if str(profile["owner_user_id"]) != uid:
                 raise HTTPException(status_code=403, detail="forbidden")
+            if not bool(profile["payout_enabled"]):
+                raise HTTPException(status_code=403, detail="payouts are not enabled")
+            if bool(profile["payouts_paused"]):
+                raise HTTPException(status_code=403, detail="payouts are paused")
 
             account_id = str(profile["stripe_connected_account_id"] or "")
             if not account_id:
@@ -1235,7 +1296,7 @@ def payout_node_earning(
                 raise HTTPException(status_code=404, detail="earning not found")
 
             earning_status = str(earning["status"])
-            if earning_status not in {"approved", "calculated"}:
+            if earning_status != "approved":
                 raise HTTPException(status_code=400, detail="earning not payable")
 
             amount_yen = int(earning["net_amount_yen"])

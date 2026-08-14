@@ -7,6 +7,7 @@ import os
 import sys
 import types
 import unittest
+from unittest.mock import MagicMock, patch
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -65,6 +66,7 @@ def _install_import_stubs() -> None:
     fake_gc = types.ModuleType("object_gc")
     for name in (
         "fetch_pending_object_gc_tasks",
+        "gc_unreferenced_objects",
         "init_object_gc_schema",
         "mark_object_gc_task_done_by_reply",
         "mark_object_gc_task_failed",
@@ -95,6 +97,24 @@ def _install_import_stubs() -> None:
 _install_import_stubs()
 sys.modules.pop("server", None)
 server = importlib.import_module("server")
+
+# `server` keeps direct references to these collaborators after import.  Do
+# not leave the import stubs in the global module cache: discovery imports all
+# test modules before running them, and later admin API tests must load their
+# real implementations.
+for _stubbed_module in (
+    "zmq",
+    "psycopg",
+    "psycopg.rows",
+    "meta_db_pg",
+    "replica_repair_service",
+    "usage_metering",
+    "node_heartbeat_stats_patch",
+    "object_gc",
+    "auth_util",
+    "replica_health_service",
+):
+    sys.modules.pop(_stubbed_module, None)
 
 
 class FakeClientSocket:
@@ -141,6 +161,90 @@ class DataServerFailoverTests(unittest.TestCase):
             failover=state,
             client_ready_sent=True,
         )
+
+    def _apply_repair_needed_audit(self, *, queue_enabled: bool):
+        ds = self._new_server()
+        ds.audit_pending = {}
+        cur = object()
+        conn = MagicMock()
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cur
+        conn.cursor.return_value = cursor_context
+        db_context = MagicMock()
+        db_context.__enter__.return_value = conn
+        audit_result = {
+            "repair_needed": True,
+            "file_object_id": "object-1",
+            "outcome": "missing",
+            "purpose": "scheduled",
+            "status": "failed",
+            "terminal": True,
+            "repair_job_id": None,
+        }
+        with (
+            patch.object(server, "REPLICA_REPAIR_QUEUE_ENABLED", queue_enabled),
+            patch.object(server, "db_conn", return_value=db_context),
+            patch.object(server, "complete_audit_job", return_value=audit_result),
+            patch.object(server, "enqueue_repair_job") as enqueue,
+            patch.object(server, "_log_event"),
+        ):
+            ds._apply_audit_result("audit-1", "missing", "", 1)
+        conn.commit.assert_called_once_with()
+        return enqueue, cur
+
+    def test_audit_result_does_not_enqueue_repair_when_queue_is_disabled(self) -> None:
+        enqueue, _ = self._apply_repair_needed_audit(queue_enabled=False)
+        enqueue.assert_not_called()
+
+    def test_audit_result_enqueues_repair_when_queue_is_enabled(self) -> None:
+        enqueue, cur = self._apply_repair_needed_audit(queue_enabled=True)
+        enqueue.assert_called_once_with(
+            cur,
+            file_object_id="object-1",
+            reason="audit_missing",
+        )
+
+    def test_superseded_verified_repair_is_not_retried(self) -> None:
+        ds = self._new_server()
+        ds.audit_pending = {
+            "event-1": types.SimpleNamespace(
+                audit_job_id="audit-1",
+                repair_job_id="repair-1",
+            )
+        }
+        cur = object()
+        conn = MagicMock()
+        cursor_context = MagicMock()
+        cursor_context.__enter__.return_value = cur
+        conn.cursor.return_value = cursor_context
+        db_context = MagicMock()
+        db_context.__enter__.return_value = conn
+        audit_result = {
+            "repair_needed": False,
+            "file_object_id": "object-1",
+            "node_id": "target-1",
+            "outcome": "ok",
+            "purpose": "repair_verify",
+            "status": "completed",
+            "terminal": True,
+            "repair_job_id": "repair-1",
+        }
+        repair_result = {
+            "applied": True,
+            "status": "canceled",
+            "reason": "target_already_satisfied",
+            "published": False,
+        }
+        with (
+            patch.object(server, "db_conn", return_value=db_context),
+            patch.object(server, "complete_audit_job", return_value=audit_result),
+            patch.object(server, "complete_repair_job", return_value=repair_result),
+            patch.object(server, "schedule_repair_retry") as retry,
+            patch.object(server, "_log_event"),
+        ):
+            ds._apply_audit_result("event-1", "ok", "hash", 1)
+        retry.assert_not_called()
+        conn.commit.assert_called_once_with()
 
     def test_switch_removes_old_node_attempt_mapping(self) -> None:
         ds = self._new_server()

@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, EmailStr
 from psycopg.rows import dict_row
 
+from admin_controls import AdminControlsUnavailable, restriction_for_request
 from meta_db_pg import db_conn, now_ts
 from items_phase2_patch import ROOT_ID, current_user_id
 
@@ -392,7 +393,23 @@ def _filter_backup_namespace_items(cur, uid: str, items: List[Dict[str, Any]]) -
     return [item for item in items if not _item_under_any_backup_target(cur, str(item["item_id"]), backup_root_ids)]
 
 
-def _fetch_recent_opened(cur, uid: str) -> List[Dict[str, Any]]:
+def _sharing_disabled(uid: str) -> bool:
+    """Return whether received-share data must be hidden for this user."""
+    try:
+        return restriction_for_request(uid, "/shared") == "sharing_disabled"
+    except AdminControlsUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="account controls are temporarily unavailable",
+        ) from exc
+
+
+def _fetch_recent_opened(
+    cur,
+    uid: str,
+    *,
+    include_shared: bool = True,
+) -> List[Dict[str, Any]]:
     cur.execute(
         f"""
         SELECT rio.item_id, rio.opened_at,
@@ -415,6 +432,8 @@ def _fetch_recent_opened(cur, uid: str) -> List[Dict[str, Any]]:
         item, access_kind = _can_access_item(cur, uid, item_id)
         if not item or access_kind == "none":
             continue
+        if access_kind == "shared" and not include_shared:
+            continue
         item["opened_at"] = int(record.get("opened_at") or 0)
         results.append(item)
     return results
@@ -424,7 +443,8 @@ def _fetch_recent_opened(cur, uid: str) -> List[Dict[str, Any]]:
 def list_home(sort: str = Query(default="updated_at:desc"), uid: str = Depends(current_user_id)) -> ListOut:
     with db_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            items = _merge_unique(_filter_backup_namespace_items(cur, uid, _fetch_owned_root_items(cur, uid)), _fetch_shared_received_roots(cur, uid))
+            owned = _filter_backup_namespace_items(cur, uid, _fetch_owned_root_items(cur, uid))
+            items = owned if _sharing_disabled(uid) else _merge_unique(owned, _fetch_shared_received_roots(cur, uid))
     return ListOut(items=_sort_items(items, sort), parent=None, breadcrumbs=[])
 
 
@@ -456,7 +476,7 @@ def list_shared_children(parent_id: str, sort: str = Query(default="updated_at:d
 def list_recent_opened(uid: str = Depends(current_user_id)) -> ListOut:
     with db_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            items = _fetch_recent_opened(cur, uid)
+            items = _fetch_recent_opened(cur, uid, include_shared=not _sharing_disabled(uid))
     return ListOut(items=_sort_items(items, "opened_at:desc", keep_folder_first=False), parent=None, breadcrumbs=[])
 
 
@@ -469,6 +489,9 @@ def library_search(
     query = q.strip().lower()
     if not query:
         return SearchOut(items=[], q=q, total=0)
+    sharing_disabled = _sharing_disabled(uid)
+    if sharing_disabled and scope == "shared":
+        raise HTTPException(status_code=403, detail="sharing_disabled")
     with db_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             if scope == "owned":
@@ -476,9 +499,10 @@ def library_search(
             elif scope == "shared":
                 items = _fetch_shared_received_roots(cur, uid)
             elif scope == "recent":
-                items = _fetch_recent_opened(cur, uid)
+                items = _fetch_recent_opened(cur, uid, include_shared=not sharing_disabled)
             else:
-                items = _merge_unique(_fetch_owned_items(cur, uid), _fetch_shared_received_roots(cur, uid))
+                owned = _fetch_owned_items(cur, uid)
+                items = owned if sharing_disabled else _merge_unique(owned, _fetch_shared_received_roots(cur, uid))
     filtered = [item for item in items if query in str(item.get("name") or "").lower()]
     if scope == "recent":
         filtered = _sort_items(filtered, "opened_at:desc", keep_folder_first=False)
@@ -623,6 +647,8 @@ def mark_item_opened(item_id: str, uid: str = Depends(current_user_id)) -> OpenO
             item, access_kind = _can_access_item(cur, uid, item_id)
             if not item or access_kind == "none":
                 raise HTTPException(status_code=403, detail="item access denied")
+            if access_kind == "shared" and _sharing_disabled(uid):
+                raise HTTPException(status_code=403, detail="sharing_disabled")
             cur.execute(
                 """
                 INSERT INTO recent_item_opens(user_id,item_id,opened_at)
@@ -646,6 +672,8 @@ def download_token_shared_or_owned(item_id: str, uid: str = Depends(current_user
             item, access_kind = _can_access_item(cur, uid, item_id)
             if not item or access_kind == "none":
                 raise HTTPException(status_code=403, detail="item access denied")
+            if access_kind == "shared" and _sharing_disabled(uid):
+                raise HTTPException(status_code=403, detail="sharing_disabled")
             if not item.get("file_object_id"):
                 raise HTTPException(status_code=400, detail="folder download token is unsupported")
             is_shared = access_kind == "shared"

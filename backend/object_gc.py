@@ -21,6 +21,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
 from psycopg.rows import dict_row
 
 from meta_db_pg import db_conn, now_ts
+from repair_object_lock import lock_repair_object
 
 
 OBJECT_GC_QUEUE_DDL = [
@@ -249,7 +250,15 @@ def gc_unreferenced_objects(
     released_replica_count = 0
     released_bytes = 0
 
+    processed_gc_ids: List[str] = []
     for oid in gc_ids:
+        # Repair publication and object deletion must serialize on the same
+        # object row. Re-check references after the optimistic candidate scan.
+        if not lock_repair_object(cur, file_object_id=oid):
+            continue
+        if oid not in find_unreferenced_file_object_ids(cur, [oid]):
+            continue
+        processed_gc_ids.append(oid)
         meta = _object_meta(cur, oid)
         size_bytes = int(meta.get("size_bytes") or 0)
         start_ts = int(meta.get("start_ts") or ts)
@@ -288,11 +297,11 @@ def gc_unreferenced_objects(
 
     return {
         "candidate_count": len(candidates),
-        "gc_object_count": len(gc_ids),
+        "gc_object_count": len(processed_gc_ids),
         "queued_delete_count": queued,
         "released_replica_count": released_replica_count,
         "released_bytes": released_bytes,
-        "gc_file_object_ids": gc_ids,
+        "gc_file_object_ids": processed_gc_ids,
     }
 
 

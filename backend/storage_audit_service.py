@@ -18,6 +18,7 @@ from replica_health_service import (
     mark_replica_failure,
     mark_replica_healthy,
 )
+from repair_object_lock import lock_repair_object
 from repair_transfer import retry_delay_seconds
 
 
@@ -321,6 +322,22 @@ def complete_audit_job(
     if normalized not in {"ok", "missing", "hash_mismatch", "timeout", "error"}:
         normalized = "error"
 
+    # First discover the owning object without a row lock.  The row is read
+    # again after acquiring locks in the global object -> repair -> audit
+    # order, so a concurrent cancellation or retry cannot be missed.
+    cur.execute("SELECT * FROM audit_jobs WHERE audit_job_id=%s", (str(audit_job_id),))
+    job_ref = _row_dict(cur.fetchone())
+    if not job_ref:
+        return {"applied": False, "reason": "not_found", "audit_job_id": str(audit_job_id)}
+    file_object_id = str(job_ref["file_object_id"])
+    if not lock_repair_object(cur, file_object_id=file_object_id):
+        return {"applied": False, "reason": "object_missing", **job_ref}
+    if job_ref.get("repair_job_id"):
+        cur.execute(
+            "SELECT repair_job_id FROM repair_jobs WHERE repair_job_id=%s FOR UPDATE",
+            (str(job_ref["repair_job_id"]),),
+        )
+        cur.fetchone()
     cur.execute("SELECT * FROM audit_jobs WHERE audit_job_id=%s FOR UPDATE", (str(audit_job_id),))
     job = _row_dict(cur.fetchone())
     if not job:
@@ -460,7 +477,6 @@ def recover_stale_audit_jobs(
         WHERE status='sent' AND COALESCE(sent_at,created_at) <= %s
           AND NOT (COALESCE(current_event_id,'') = ANY(%s::text[]))
         ORDER BY sent_at,created_at
-        FOR UPDATE SKIP LOCKED
         """,
         (stale_before, excluded),
     )
