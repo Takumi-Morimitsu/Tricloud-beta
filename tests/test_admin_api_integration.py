@@ -79,6 +79,26 @@ class AdminApiIntegrationTests(unittest.TestCase):
                 response = client.get("/admin/v1/dashboard")
         self.assertEqual(response.status_code, 401)
 
+    def test_login_accepts_non_email_admin_identifier(self) -> None:
+        with (
+            patch.object(self.module, "authenticate_admin", return_value=self.principal.user_id) as authenticate,
+            patch.object(
+                self.module,
+                "create_admin_session",
+                return_value=("admin-token", self.principal),
+            ),
+            patch.object(self.module, "record_admin_audit"),
+            self.TestClient(self.module.app) as client,
+        ):
+            response = client.post(
+                "/admin/v1/session",
+                json={"email": "@", "password": "password"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["access_token"], "admin-token")
+        authenticate.assert_called_once_with("@", "password")
+
     def test_dashboard_uses_separate_admin_dependency(self) -> None:
         def admin_dependency(request: FastAPIRequest):
             request.state.admin_user_id = self.principal.user_id
