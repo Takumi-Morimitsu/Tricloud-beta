@@ -125,7 +125,7 @@ function Login({ onDone }: { onDone: () => void }) {
       <form className="login-card" onSubmit={submit}>
         <h1>Tricloud 管理</h1>
         <p>DBで admin ロールが付与されたアカウントのみ利用できます。</p>
-        <label>メール<input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
+        <label>メール / ログインID<input type="text" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
         <label>パスワード<input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>
         {error && <div className="error">{error}</div>}
         <button className="primary" disabled={busy}>{busy ? "確認中…" : "ログイン"}</button>

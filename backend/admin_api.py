@@ -134,7 +134,9 @@ async def request_id_middleware(request: Request, call_next):
 
 
 class LoginIn(BaseModel):
-    email: str = Field(min_length=3, max_length=320)
+    # Admin accounts are looked up by the value stored in users.email, but the
+    # administration login intentionally does not impose email-address syntax.
+    email: str = Field(min_length=1, max_length=320)
     password: str = Field(min_length=1, max_length=1000)
 
 

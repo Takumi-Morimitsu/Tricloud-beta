@@ -56,6 +56,11 @@ class Phase2AdminStaticTests(unittest.TestCase):
         self.assertIn('/admin/v1/audit-logs', source)
         self.assertNotIn("control_api_integrated_improved", source)
 
+    def test_admin_login_input_does_not_require_email_syntax(self) -> None:
+        source = (PROJECT_ROOT / "admin-web" / "src" / "App.tsx").read_text(encoding="utf-8")
+        self.assertIn('<input type="text" autoComplete="username"', source)
+        self.assertNotIn('<input type="email" autoComplete="username"', source)
+
 
 if __name__ == "__main__":
     unittest.main()
